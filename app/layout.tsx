@@ -1,15 +1,22 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import { CartProvider } from '@/lib/cart-context'
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: 'Bella Crosta - Premium Pizza Delivery & Online Ordering',
+  description: 'Order authentic Italian pizzas online. Fresh ingredients, fast delivery, and delicious taste. Experience the flavor of Italy delivered to your door.',
+  keywords: 'pizza delivery, italian pizza, food delivery, pizza restaurant, online ordering',
   generator: 'v0.app',
+  openGraph: {
+    title: 'Bella Crosta - Premium Pizza Delivery',
+    description: 'Order authentic Italian pizzas online. Fresh delivery guaranteed.',
+    type: 'website',
+  },
   icons: {
     icon: [
       {
@@ -37,8 +44,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="font-sans antialiased">
-        {children}
-        <Analytics />
+        <CartProvider>
+          {children}
+          <Analytics />
+        </CartProvider>
       </body>
     </html>
   )
