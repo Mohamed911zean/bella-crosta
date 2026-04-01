@@ -58,6 +58,7 @@ export interface Order {
   created_at: string
   order_items?: OrderItem[]
   customers?: Customer
+  payments?: any[]
 }
 
 // ─── Products ─────────────────────────────────────────────────────────────────
@@ -118,22 +119,37 @@ export async function getAllProducts(): Promise<Product[]> {
   return data ?? []
 }
 
+// Helper to map DB order structure with payments relation to the Order interface
+ function mapOrder(data: any): Order | null {
+   if (!data) return null
+   const payment = data.payments?.[0]
+   const items = data.order_items?.map((item: any) => ({
+     ...item,
+     product_name: item.product_name || (item.products as any)?.name || 'Unknown Product'
+   }))
+   return {
+     ...data,
+     order_items: items,
+     payment_method: payment?.payment_method ?? 'instapay',
+     payment_proof_url: payment?.proof_image_url ?? null,
+   }
+ }
+
 // ─── Orders ───────────────────────────────────────────────────────────────────
-// Alias bc_order_items → order_items and bc_customers → customers
-// so the rest of the app doesn't need to know the underlying table names.
 export async function getOrderById(orderId: string): Promise<Order | null> {
   const { data, error } = await supabase
     .from('orders')
     .select(`
       *,
-      order_items:bc_order_items(*),
-      customers:bc_customers(*)
+      order_items(*, products(name)),
+      customers(*),
+      payments(*)
     `)
     .eq('id', orderId)
     .single()
 
   if (error) { console.error('getOrderById:', error.message); return null }
-  return data
+  return mapOrder(data)
 }
 
 export async function getCustomerOrders(customerId: string): Promise<Order[]> {
@@ -141,13 +157,14 @@ export async function getCustomerOrders(customerId: string): Promise<Order[]> {
     .from('orders')
     .select(`
       *,
-      order_items:bc_order_items(*)
+      order_items(*, products(name)),
+      payments(*)
     `)
     .eq('customer_id', customerId)
     .order('created_at', { ascending: false })
 
   if (error) { console.error('getCustomerOrders:', error.message); return [] }
-  return data ?? []
+  return (data ?? []).map(mapOrder) as Order[]
 }
 
 export async function getAllOrders(): Promise<Order[]> {
@@ -155,13 +172,14 @@ export async function getAllOrders(): Promise<Order[]> {
     .from('orders')
     .select(`
       *,
-      order_items:bc_order_items(*),
-      customers:bc_customers(*)
+      order_items(*, products(name)),
+      customers(*),
+      payments(*)
     `)
     .order('created_at', { ascending: false })
 
   if (error) { console.error('getAllOrders:', error.message); return [] }
-  return data ?? []
+  return (data ?? []).map(mapOrder) as Order[]
 }
 
 // ─── Customers ────────────────────────────────────────────────────────────────

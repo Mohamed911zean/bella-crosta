@@ -9,6 +9,7 @@ import { Menu, CheckCircle, Clock, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 
 export default function AdminPaymentsPage() {
+  const [user, setUser] = useState<any>(null)
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -16,14 +17,26 @@ export default function AdminPaymentsPage() {
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
 
+  useEffect(() => {
+    async function checkAdmin() {
+      const res = await fetch('/api/auth/session')
+      const data = await res.json()
+      if (!data.user || data.user.role !== 'admin') {
+        window.location.href = '/'
+        return
+      }
+      setUser(data.user)
+      loadOrders()
+    }
+    checkAdmin()
+  }, [])
+
   const loadOrders = () => {
     getAllOrders().then(data => {
       setOrders(data)
       setLoading(false)
     })
   }
-
-  useEffect(() => { loadOrders() }, [])
 
   const handleConfirm = (orderId: string) => {
     setConfirmingId(orderId)

@@ -10,6 +10,7 @@ import { Menu, AlertCircle, Save, X } from 'lucide-react'
 const LOW_STOCK_THRESHOLD = 10
 
 export default function AdminInventoryPage() {
+  const [user, setUser] = useState<any>(null)
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -17,14 +18,26 @@ export default function AdminInventoryPage() {
   const [editQty, setEditQty] = useState('')
   const [isPending, startTransition] = useTransition()
 
+  useEffect(() => {
+    async function checkAdmin() {
+      const res = await fetch('/api/auth/session')
+      const data = await res.json()
+      if (!data.user || data.user.role !== 'admin') {
+        window.location.href = '/'
+        return
+      }
+      setUser(data.user)
+      loadProducts()
+    }
+    checkAdmin()
+  }, [])
+
   const loadProducts = () => {
     getAllProducts().then(data => {
       setProducts(data)
       setLoading(false)
     })
   }
-
-  useEffect(() => { loadProducts() }, [])
 
   const startEdit = (product: Product) => {
     setEditingId(product.id)

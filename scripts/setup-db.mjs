@@ -111,7 +111,8 @@ const setupDatabase = async () => {
         CREATE TABLE IF NOT EXISTS order_items (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-          product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+          product_id UUID NOT NULL REFERENCES products(id) ON DELETE SET NULL,
+          product_name VARCHAR(255) NOT NULL,
           quantity INT NOT NULL,
           unit_price DECIMAL(10, 2) NOT NULL,
           subtotal DECIMAL(10, 2) NOT NULL,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { signUp } from '@/lib/auth'
 import { Mail, Lock, User, Loader2, AlertCircle, Eye, EyeOff, CheckCircle } from 'lucide-react'
@@ -58,6 +58,8 @@ function PasswordStrength({ password }: { password: string }) {
 
 export default function SignupPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const returnUrl = searchParams.get('returnUrl') || null
 
   const [form, setForm] = useState({
     fullName: '',
@@ -100,7 +102,12 @@ export default function SignupPage() {
         return
       }
 
-      router.push(result.redirectTo)
+      // returnUrl overrides role-based redirect only for customer routes
+      const dest = returnUrl && !returnUrl.startsWith('/admin')
+        ? returnUrl
+        : result.redirectTo
+
+      router.push(dest)
       router.refresh()
     })
   }

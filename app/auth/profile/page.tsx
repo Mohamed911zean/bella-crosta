@@ -71,7 +71,7 @@ export default async function ProfilePage() {
                     View cart
                   </Link>
                   <Link
-                    href="/"
+                    href="/auth/logout"
                     className="rounded-2xl bg-destructive px-4 py-3 text-sm font-semibold text-white transition hover:bg-destructive/90"
                   >
                     Sign out

@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { signIn, signUp } from '@/lib/auth'
 import { Mail, Lock, User, AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 interface AuthFormProps {
   onSuccess?: () => void
@@ -12,6 +12,8 @@ interface AuthFormProps {
 
 export function AuthForm({ onSuccess, mode: initialMode = 'login' }: AuthFormProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const returnUrl = searchParams.get('returnUrl')
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -29,13 +31,13 @@ export function AuthForm({ onSuccess, mode: initialMode = 'login' }: AuthFormPro
         if (!fullName.trim()) { setError('Please enter your full name.'); return }
         const result = await signUp(email, password, fullName.trim())
         if (!result.success) { setError(result.error); return }
-        router.push(result.redirectTo)
+        router.push(returnUrl || result.redirectTo)
         router.refresh()
         onSuccess?.()
       } else {
         const result = await signIn(email, password)
         if (!result.success) { setError(result.error); return }
-        router.push(result.redirectTo)
+        router.push(returnUrl || result.redirectTo)
         router.refresh()
         onSuccess?.()
       }

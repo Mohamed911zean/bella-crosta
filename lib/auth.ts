@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const SESSION_COOKIE = 'session'
+const SESSION_COOKIE = 'bc_session'
 
 function getServerClient() {
   return createClient(supabaseUrl, supabaseAnonKey, {
@@ -101,9 +101,19 @@ export async function signIn(
 
 // ─── Sign Out ─────────────────────────────────────────────────────────────────
 export async function signOut(): Promise<void> {
-  const cookieStore = await cookies()
-  cookieStore.delete(SESSION_COOKIE)
-  redirect('/')
+  try {
+    const supabase = getServerClient()
+    const token = await getSessionToken()
+    if (token) {
+      await supabase.auth.signOut()
+    }
+  } catch (err) {
+    console.error('signOut error:', err)
+  } finally {
+    const cookieStore = await cookies()
+    cookieStore.delete(SESSION_COOKIE)
+    redirect('/')
+  }
 }
 
 // ─── Get session token ────────────────────────────────────────────────────────

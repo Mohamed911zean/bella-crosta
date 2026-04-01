@@ -17,16 +17,27 @@ const STATUS_FILTERS = [
 ]
 
 export default function AdminOrdersPage() {
+  const [user, setUser] = useState<any>(null)
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [filterStatus, setFilterStatus] = useState('all')
 
   useEffect(() => {
-    getAllOrders().then(data => {
-      setOrders(data)
-      setLoading(false)
-    })
+    async function checkAdmin() {
+      const res = await fetch('/api/auth/session')
+      const data = await res.json()
+      if (!data.user || data.user.role !== 'admin') {
+        window.location.href = '/'
+        return
+      }
+      setUser(data.user)
+      getAllOrders().then(data => {
+        setOrders(data)
+        setLoading(false)
+      })
+    }
+    checkAdmin()
   }, [])
 
   const filtered = filterStatus === 'all'

@@ -26,18 +26,42 @@ export default function OrderPage() {
   const params = useParams()
   const orderId = params.id as string
 
+  const [user, setUser] = useState<any>(null)
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    getOrderById(orderId)
-      .then(data => {
-        if (!data) setError('Order not found.')
-        else setOrder(data)
+    async function fetchData() {
+      try {
+        const sessionRes = await fetch('/api/auth/session')
+        const sessionData = await sessionRes.json()
+        const currentUser = sessionData.user
+
+        if (!currentUser) {
+          setError('Please sign in to view your order.')
+          setLoading(false)
+          return
+        }
+        setUser(currentUser)
+
+        const orderData = await getOrderById(orderId)
+        if (!orderData) {
+          setError('Order not found.')
+        } else if (currentUser.role !== 'admin' && orderData.customer_id !== currentUser.id) {
+          setError('You do not have permission to view this order.')
+        } else {
+          setOrder(orderData)
+        }
+      } catch (err) {
+        console.error('fetchData error:', err)
+        setError('Failed to load order.')
+      } finally {
         setLoading(false)
-      })
-      .catch(() => { setError('Failed to load order.'); setLoading(false) })
+      }
+    }
+
+    fetchData()
   }, [orderId])
 
   if (loading) {
