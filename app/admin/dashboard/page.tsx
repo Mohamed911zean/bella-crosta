@@ -1,215 +1,150 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { AdminSidebar } from '@/components/admin-sidebar'
-import { supabase } from '@/lib/db'
 import { getAllOrders } from '@/lib/db'
+import type { Order } from '@/lib/db'
 import { Menu, TrendingUp, ShoppingCart, CreditCard, Package } from 'lucide-react'
 import Link from 'next/link'
 
 export default function AdminDashboard() {
-  const router = useRouter()
-  const [user, setUser] = useState<any>(null)
-  const [orders, setOrders] = useState<any[]>([])
+  const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
-    checkAuth()
+    getAllOrders().then(data => {
+      setOrders(data)
+      setLoading(false)
+    })
   }, [])
 
-  const checkAuth = async () => {
-    try {
-      const {
-        data: { user: currentUser },
-      } = await supabase.auth.getUser()
+  // Stats derived from bc_orders fields directly
+  const totalOrders      = orders.length
+  const totalRevenue     = orders.reduce((sum, o) => sum + Number(o.total_amount), 0)
+  const pendingOrders    = orders.filter(o => o.status === 'pending').length
+  const confirmedPayments = orders.filter(o => o.payment_status === 'confirmed').length
 
-      if (!currentUser) {
-        router.push('/admin/login')
-        return
-      }
-
-      // Verify admin access
-      const { data: adminData } = await supabase
-        .from('admin_users')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single()
-
-      if (!adminData) {
-        router.push('/admin/login')
-        return
-      }
-
-      setUser(currentUser)
-      loadOrders()
-    } catch (err) {
-      router.push('/admin/login')
-    } finally {
-      setLoading(false)
+  const statusColor = (status: string) => {
+    const map: Record<string, string> = {
+      pending:   'bg-yellow-500/15 text-yellow-400',
+      confirmed: 'bg-blue-500/15 text-blue-400',
+      preparing: 'bg-primary/15 text-primary',
+      delivered: 'bg-green-500/15 text-green-400',
+      cancelled: 'bg-destructive/15 text-destructive',
     }
+    return map[status] ?? 'bg-muted text-muted-foreground'
   }
 
-  const loadOrders = async () => {
-    try {
-      const ordersData = await getAllOrders()
-      setOrders(ordersData)
-    } catch (err) {
-      console.error('Error loading orders:', err)
+  const paymentColor = (status: string) => {
+    const map: Record<string, string> = {
+      confirmed: 'bg-green-500/15 text-green-400',
+      uploaded:  'bg-yellow-500/15 text-yellow-400',
+      pending:   'bg-muted text-muted-foreground',
     }
+    return map[status] ?? 'bg-muted text-muted-foreground'
   }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    )
-  }
-
-  // Calculate stats
-  const totalOrders = orders.length
-  const totalRevenue = orders.reduce((sum, order) => sum + order.total_amount, 0)
-  const pendingOrders = orders.filter((o) => o.status === 'pending').length
-  const confirmedPayments = orders.filter(
-    (o) => o.payments?.length > 0 && o.payments[0]?.status === 'confirmed'
-  ).length
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Desktop Sidebar */}
-      <div className="hidden md:block w-64">
+      {/* Desktop sidebar */}
+      <div className="hidden md:block w-64 shrink-0">
         <AdminSidebar />
       </div>
 
-      {/* Mobile Sidebar */}
+      {/* Mobile sidebar */}
       {mobileMenuOpen && (
         <AdminSidebar mobile onClose={() => setMobileMenuOpen(false)} />
       )}
 
-      {/* Main Content */}
       <div className="flex-1 overflow-auto">
         {/* Header */}
         <div className="bg-card border-b border-border px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <h1 className="text-xl font-bold text-foreground">Dashboard</h1>
           <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            onClick={() => setMobileMenuOpen(true)}
             className="md:hidden p-2 hover:bg-muted rounded-lg transition"
           >
-            <Menu className="w-6 h-6" />
+            <Menu className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content */}
         <div className="p-4 sm:p-6">
-          {/* Stats Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-muted-foreground text-sm mb-1">Total Orders</p>
-                  <p className="text-3xl font-bold">{totalOrders}</p>
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              { label: 'Total Orders',        value: loading ? '…' : totalOrders,                   icon: ShoppingCart, color: 'text-primary'   },
+              { label: 'Total Revenue',       value: loading ? '…' : `$${totalRevenue.toFixed(2)}`, icon: TrendingUp,   color: 'text-green-400' },
+              { label: 'Pending Orders',      value: loading ? '…' : pendingOrders,                 icon: Package,      color: 'text-yellow-400'},
+              { label: 'Confirmed Payments',  value: loading ? '…' : confirmedPayments,              icon: CreditCard,   color: 'text-blue-400'  },
+            ].map(({ label, value, icon: Icon, color }) => (
+              <div key={label} className="bg-card border border-border rounded-xl p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-muted-foreground text-xs mb-2">{label}</p>
+                    <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                  </div>
+                  <Icon className={`w-8 h-8 opacity-30 ${color}`} />
                 </div>
-                <ShoppingCart className="w-10 h-10 text-primary opacity-50" />
               </div>
-            </div>
-
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-muted-foreground text-sm mb-1">Total Revenue</p>
-                  <p className="text-3xl font-bold">${totalRevenue.toFixed(2)}</p>
-                </div>
-                <TrendingUp className="w-10 h-10 text-green-600 opacity-50" />
-              </div>
-            </div>
-
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-muted-foreground text-sm mb-1">Pending Orders</p>
-                  <p className="text-3xl font-bold">{pendingOrders}</p>
-                </div>
-                <Package className="w-10 h-10 text-yellow-600 opacity-50" />
-              </div>
-            </div>
-
-            <div className="bg-card border border-border rounded-lg p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-muted-foreground text-sm mb-1">Confirmed Payments</p>
-                  <p className="text-3xl font-bold">{confirmedPayments}</p>
-                </div>
-                <CreditCard className="w-10 h-10 text-blue-600 opacity-50" />
-              </div>
-            </div>
+            ))}
           </div>
 
-          {/* Recent Orders */}
-          <div className="bg-card border border-border rounded-lg">
+          {/* Recent orders table */}
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-              <h2 className="text-xl font-bold">Recent Orders</h2>
-              <Link
-                href="/admin/orders"
-                className="text-sm text-primary hover:underline"
-              >
-                View All
+              <h2 className="font-semibold text-foreground">Recent Orders</h2>
+              <Link href="/admin/orders" className="text-xs text-primary hover:underline">
+                View all →
               </Link>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left px-6 py-3 font-semibold">Order #</th>
-                    <th className="text-left px-6 py-3 font-semibold">Customer</th>
-                    <th className="text-left px-6 py-3 font-semibold">Amount</th>
-                    <th className="text-left px-6 py-3 font-semibold">Status</th>
-                    <th className="text-left px-6 py-3 font-semibold">Payment</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.slice(0, 10).map((order) => (
-                    <tr key={order.id} className="border-b border-border hover:bg-muted/50">
-                      <td className="px-6 py-3 font-medium">
-                        <Link
-                          href={`/admin/orders/${order.id}`}
-                          className="text-primary hover:underline"
-                        >
-                          {order.order_number}
-                        </Link>
-                      </td>
-                      <td className="px-6 py-3">{order.customers?.full_name || 'N/A'}</td>
-                      <td className="px-6 py-3 font-semibold">
-                        ${order.total_amount.toFixed(2)}
-                      </td>
-                      <td className="px-6 py-3">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          order.status === 'completed'
-                            ? 'bg-green-500/20 text-green-700'
-                            : order.status === 'pending'
-                            ? 'bg-yellow-500/20 text-yellow-700'
-                            : 'bg-blue-500/20 text-blue-700'
-                        }`}>
-                          {order.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          order.payments?.[0]?.status === 'confirmed'
-                            ? 'bg-green-500/20 text-green-700'
-                            : order.payments?.[0]?.status === 'pending'
-                            ? 'bg-yellow-500/20 text-yellow-700'
-                            : 'bg-gray-500/20 text-gray-700'
-                        }`}>
-                          {order.payments?.[0]?.status || 'Pending'}
-                        </span>
-                      </td>
+
+            {loading ? (
+              <div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>
+            ) : orders.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground text-sm">No orders yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40">
+                      <th className="text-left px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Order</th>
+                      <th className="text-left px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Customer</th>
+                      <th className="text-left px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Amount</th>
+                      <th className="text-left px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
+                      <th className="text-left px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Payment</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {orders.slice(0, 10).map(order => (
+                      <tr key={order.id} className="border-b border-border hover:bg-muted/30 transition">
+                        <td className="px-6 py-3">
+                          <Link href={`/admin/orders/${order.id}`} className="text-primary hover:underline font-medium">
+                            {order.order_number}
+                          </Link>
+                        </td>
+                        <td className="px-6 py-3 text-muted-foreground">
+                          {order.customers?.full_name ?? order.customers?.email ?? 'N/A'}
+                        </td>
+                        <td className="px-6 py-3 font-semibold text-foreground">
+                          ${Number(order.total_amount).toFixed(2)}
+                        </td>
+                        <td className="px-6 py-3">
+                          <span className={`px-2 py-1 rounded-md text-xs font-medium capitalize ${statusColor(order.status)}`}>
+                            {order.status}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3">
+                          <span className={`px-2 py-1 rounded-md text-xs font-medium capitalize ${paymentColor(order.payment_status)}`}>
+                            {order.payment_status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       </div>

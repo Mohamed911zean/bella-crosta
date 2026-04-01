@@ -1,113 +1,127 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Header } from '@/components/header'
 import { ProductCard } from '@/components/product-card'
-import {  getProductsByCategory, getProducts } from '@/lib/db'
+import { getProducts } from '@/lib/db'
+import type { Product } from '@/lib/db'
 
 export default function MenuPage() {
-  const [categories, setCategories] = useState<any[]>([])
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-  const [products, setProducts] = useState<any[]>([])
+  const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedCategory, setSelectedCategory] = useState<string>('all')
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
-    async function loadData() {
-      setLoading(true)
-      try {
-       
+    getProducts().then(data => {
+      setProducts(data)
+      setLoading(false)
+    })
+  }, [])
 
-        // Get products based on selected category
-        let prods: any[] = []
-        if (selectedCategory) {
-          prods = await getProductsByCategory(selectedCategory)
-        } else {
-          prods = await getProducts()
-        }
+  // Build unique categories from product data — no separate categories table needed
+  const categories = useMemo(() => {
+    const unique = Array.from(new Set(products.map(p => p.category)))
+    return unique.sort()
+  }, [products])
 
-        // Filter by search query
-        if (searchQuery) {
-          prods = prods.filter(
-            (p) =>
-              p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-              p.description.toLowerCase().includes(searchQuery.toLowerCase())
-          )
-        }
-
-        setProducts(prods)
-      } catch (error) {
-        console.error('Error loading menu:', error)
-      } finally {
-        setLoading(false)
-      }
+  const shown = useMemo(() => {
+    let list = products
+    if (selectedCategory !== 'all') {
+      list = list.filter(p => p.category === selectedCategory)
     }
-
-    loadData()
-  }, [selectedCategory, searchQuery])
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      list = list.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.description?.toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [products, selectedCategory, search])
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <h1 className="text-4xl font-bold mb-8">Menu</h1>
-
-        {/* Search Bar */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        {/* Page title */}
         <div className="mb-8">
-          <input
-            type="text"
-            placeholder="Search pizzas, appetizers..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-4 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-          />
+          <p className="text-xs uppercase tracking-widest text-primary mb-2 font-semibold">Our Menu</p>
+          <h1 className="text-3xl sm:text-4xl font-bold text-foreground" style={{ fontFamily: 'var(--font-display)' }}>
+            Order Online
+          </h1>
         </div>
 
-        {/* Categories */}
-        {categories.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold mb-4">Categories</h2>
-            <div className="flex flex-wrap gap-2">
+        {/* Search */}
+        <div className="mb-6 relative">
+          <input
+            type="text"
+            placeholder="Search pizzas, appetizers…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full sm:max-w-md px-4 py-2.5 pl-10 border border-border rounded-xl bg-input text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+          />
+          <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+
+        {/* Category filter — only shows once products are loaded */}
+        {!loading && categories.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-8">
+            <button
+              onClick={() => setSelectedCategory('all')}
+              className={`px-4 py-2 rounded-xl text-sm font-medium transition capitalize ${
+                selectedCategory === 'all'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'
+              }`}
+            >
+              All
+            </button>
+            {categories.map(cat => (
               <button
-                onClick={() => setSelectedCategory(null)}
-                className={`px-4 py-2 rounded-full font-medium transition ${
-                  selectedCategory === null
-                    ? 'bg-primary text-white'
-                    : 'bg-muted text-foreground hover:bg-muted/80'
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-4 py-2 rounded-xl text-sm font-medium transition capitalize ${
+                  selectedCategory === cat
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'
                 }`}
               >
-                All
+                {cat}
               </button>
-              {categories.map((category) => (
-                <button
-                  key={category.id}
-                  onClick={() => setSelectedCategory(category.id)}
-                  className={`px-4 py-2 rounded-full font-medium transition ${
-                    selectedCategory === category.id
-                      ? 'bg-primary text-white'
-                      : 'bg-muted text-foreground hover:bg-muted/80'
-                  }`}
-                >
-                  {category.name}
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
         )}
 
-        {/* Products Grid */}
+        {/* Products grid */}
         {loading ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Loading menu...</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3, 4, 5, 6].map(i => (
+              <div
+                key={i}
+                className="h-80 bg-card border border-border rounded-xl animate-pulse"
+              />
+            ))}
           </div>
-        ) : products.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">No products found</p>
+        ) : shown.length === 0 ? (
+          <div className="py-20 text-center">
+            <p className="text-4xl mb-4">🍕</p>
+            <p className="text-muted-foreground">No items found.</p>
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="mt-3 text-primary text-sm hover:underline"
+              >
+                Clear search
+              </button>
+            )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {products.map((product) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {shown.map(product => (
               <ProductCard key={product.id} {...product} />
             ))}
           </div>

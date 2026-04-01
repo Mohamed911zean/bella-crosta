@@ -99,7 +99,7 @@ export function Header() {
                       Profile
                     </Link>
                     <Link
-                      href="/auth/logout"
+                      href="/"
                       className="rounded-2xl px-3 py-2 text-sm text-foreground transition hover:bg-muted"
                     >
                       Logout

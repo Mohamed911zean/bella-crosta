@@ -1,279 +1,201 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useState, useTransition } from 'react'
 import { AdminSidebar } from '@/components/admin-sidebar'
-import { supabase } from '@/lib/db'
-import { Menu, CheckCircle, Clock, Image as ImageIcon } from 'lucide-react'
+import { getAllOrders } from '@/lib/db'
+import { confirmPayment } from '@/lib/actions'
+import type { Order } from '@/lib/db'
+import { Menu, CheckCircle, Clock, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 
 export default function AdminPaymentsPage() {
-  const router = useRouter()
-  const [user, setUser] = useState<any>(null)
-  const [payments, setPayments] = useState<any[]>([])
+  const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [filterStatus, setFilterStatus] = useState<string>('pending')
+  const [filter, setFilter] = useState<'uploaded' | 'confirmed' | 'all'>('uploaded')
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [, startTransition] = useTransition()
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
-
-  const checkAuth = async () => {
-    try {
-      const {
-        data: { user: currentUser },
-      } = await supabase.auth.getUser()
-
-      if (!currentUser) {
-        router.push('/admin/login')
-        return
-      }
-
-      const { data: adminData } = await supabase
-        .from('admin_users')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single()
-
-      if (!adminData) {
-        router.push('/admin/login')
-        return
-      }
-
-      setUser(currentUser)
-      loadPayments()
-    } catch (err) {
-      router.push('/admin/login')
-    } finally {
+  const loadOrders = () => {
+    getAllOrders().then(data => {
+      setOrders(data)
       setLoading(false)
-    }
+    })
   }
 
-  const loadPayments = async () => {
-    try {
-      const { data } = await supabase
-        .from('payments')
-        .select('*, orders(order_number, total_amount, customers(full_name, email))')
-        .order('created_at', { ascending: false })
+  useEffect(() => { loadOrders() }, [])
 
-      setPayments(data || [])
-    } catch (err) {
-      console.error('Error loading payments:', err)
-    }
-  }
-
-  const confirmPayment = async (paymentId: string) => {
-    setConfirmingId(paymentId)
-    try {
-      const { error } = await supabase
-        .from('payments')
-        .update({
-          status: 'confirmed',
-          verified_at: new Date().toISOString(),
-          verified_by: user.id,
-        })
-        .eq('id', paymentId)
-
-      if (error) throw error
-
-      // Get the order ID and update its payment status
-      const payment = payments.find((p) => p.id === paymentId)
-      if (payment) {
-        await supabase
-          .from('orders')
-          .update({ payment_status: 'confirmed' })
-          .eq('id', payment.order_id)
-      }
-
-      await loadPayments()
-    } catch (err) {
-      console.error('Error confirming payment:', err)
-    } finally {
+  const handleConfirm = (orderId: string) => {
+    setConfirmingId(orderId)
+    startTransition(async () => {
+      await confirmPayment(orderId)
       setConfirmingId(null)
-    }
+      loadOrders()
+    })
   }
 
-  const filteredPayments = payments.filter((payment) => {
-    if (filterStatus === 'all') return true
-    return payment.status === filterStatus
+  const filtered = orders.filter(o => {
+    if (filter === 'all') return true
+    return o.payment_status === filter
   })
 
-  const statuses = [
-    { value: 'pending', label: 'Pending' },
-    { value: 'confirmed', label: 'Confirmed' },
-    { value: 'rejected', label: 'Rejected' },
-    { value: 'all', label: 'All' },
-  ]
+  const uploadedCount  = orders.filter(o => o.payment_status === 'uploaded').length
+  const confirmedCount = orders.filter(o => o.payment_status === 'confirmed').length
+  const totalRevenue   = orders.filter(o => o.payment_status === 'confirmed')
+    .reduce((sum, o) => sum + Number(o.total_amount), 0)
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    )
+  const paymentLabel = (status: string) => {
+    const map: Record<string, string> = {
+      uploaded:  'Awaiting Review',
+      confirmed: 'Confirmed',
+      pending:   'No Proof',
+    }
+    return map[status] ?? status
   }
 
-  const pendingCount = payments.filter((p) => p.status === 'pending').length
-  const confirmedCount = payments.filter((p) => p.status === 'confirmed').length
-  const totalAmount = filteredPayments.reduce((sum, p) => sum + p.amount, 0)
+  const paymentColor = (status: string) => {
+    const map: Record<string, string> = {
+      confirmed: 'bg-green-500/15 text-green-400',
+      uploaded:  'bg-yellow-500/15 text-yellow-400',
+      pending:   'bg-muted text-muted-foreground',
+    }
+    return map[status] ?? 'bg-muted text-muted-foreground'
+  }
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Desktop Sidebar */}
-      <div className="hidden md:block w-64">
+      <div className="hidden md:block w-64 shrink-0">
         <AdminSidebar />
       </div>
 
-      {/* Mobile Sidebar */}
       {mobileMenuOpen && (
         <AdminSidebar mobile onClose={() => setMobileMenuOpen(false)} />
       )}
 
-      {/* Main Content */}
       <div className="flex-1 overflow-auto">
-        {/* Header */}
         <div className="bg-card border-b border-border px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-          <h1 className="text-2xl font-bold">Payments</h1>
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 hover:bg-muted rounded-lg transition"
-          >
-            <Menu className="w-6 h-6" />
+          <h1 className="text-xl font-bold text-foreground">Payments</h1>
+          <button onClick={() => setMobileMenuOpen(true)} className="md:hidden p-2 hover:bg-muted rounded-lg transition">
+            <Menu className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content */}
         <div className="p-4 sm:p-6">
           {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div className="bg-card border border-border rounded-lg p-4">
-              <p className="text-sm text-muted-foreground mb-1">Pending Payments</p>
-              <p className="text-3xl font-bold text-yellow-600">{pendingCount}</p>
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-card border border-border rounded-xl p-4 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Awaiting Review</p>
+              <p className="text-2xl font-bold text-yellow-400">{uploadedCount}</p>
             </div>
-            <div className="bg-card border border-border rounded-lg p-4">
-              <p className="text-sm text-muted-foreground mb-1">Confirmed Payments</p>
-              <p className="text-3xl font-bold text-green-600">{confirmedCount}</p>
+            <div className="bg-card border border-border rounded-xl p-4 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Confirmed</p>
+              <p className="text-2xl font-bold text-green-400">{confirmedCount}</p>
             </div>
-            <div className="bg-card border border-border rounded-lg p-4">
-              <p className="text-sm text-muted-foreground mb-1">Total Amount</p>
-              <p className="text-3xl font-bold text-primary">
-                ${totalAmount.toFixed(2)}
-              </p>
+            <div className="bg-card border border-border rounded-xl p-4 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Confirmed Revenue</p>
+              <p className="text-2xl font-bold text-primary">${totalRevenue.toFixed(2)}</p>
             </div>
           </div>
 
           {/* Filters */}
-          <div className="mb-6 flex flex-wrap gap-2">
-            {statuses.map((status) => (
+          <div className="flex gap-2 mb-6">
+            {([['uploaded', 'Awaiting Review'], ['confirmed', 'Confirmed'], ['all', 'All']] as const).map(([v, l]) => (
               <button
-                key={status.value}
-                onClick={() => setFilterStatus(status.value)}
-                className={`px-4 py-2 rounded-lg font-medium transition ${
-                  filterStatus === status.value
-                    ? 'bg-primary text-white'
-                    : 'bg-muted text-foreground hover:bg-muted/80'
+                key={v}
+                onClick={() => setFilter(v)}
+                className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
+                  filter === v
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'
                 }`}
               >
-                {status.label}
+                {l}
               </button>
             ))}
           </div>
 
-          {/* Payments Table */}
-          <div className="bg-card border border-border rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/50">
-                    <th className="text-left px-4 sm:px-6 py-3 font-semibold">Order</th>
-                    <th className="text-left px-4 sm:px-6 py-3 font-semibold">Customer</th>
-                    <th className="text-left px-4 sm:px-6 py-3 font-semibold">Amount</th>
-                    <th className="text-left px-4 sm:px-6 py-3 font-semibold">Status</th>
-                    <th className="text-left px-4 sm:px-6 py-3 font-semibold">Proof</th>
-                    <th className="text-left px-4 sm:px-6 py-3 font-semibold">Date</th>
-                    <th className="text-center px-4 sm:px-6 py-3 font-semibold">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredPayments.map((payment) => (
-                    <tr key={payment.id} className="border-b border-border hover:bg-muted/50 transition">
-                      <td className="px-4 sm:px-6 py-3 font-medium">
-                        <Link
-                          href={`/admin/orders/${payment.order_id}`}
-                          className="text-primary hover:underline"
-                        >
-                          {payment.orders?.order_number}
-                        </Link>
-                      </td>
-                      <td className="px-4 sm:px-6 py-3">
-                        <div>
-                          <p className="font-medium text-sm">
-                            {payment.orders?.customers?.full_name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {payment.orders?.customers?.email}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="px-4 sm:px-6 py-3 font-semibold">
-                        ${payment.amount.toFixed(2)}
-                      </td>
-                      <td className="px-4 sm:px-6 py-3">
-                        <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                          payment.status === 'confirmed'
-                            ? 'bg-green-500/20 text-green-700'
-                            : payment.status === 'pending'
-                            ? 'bg-yellow-500/20 text-yellow-700'
-                            : 'bg-destructive/20 text-destructive'
-                        }`}>
-                          {payment.status}
-                        </span>
-                      </td>
-                      <td className="px-4 sm:px-6 py-3">
-                        {payment.proof_image_url ? (
-                          <a
-                            href={payment.proof_image_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline text-xs flex items-center gap-1 w-fit"
-                          >
-                            <ImageIcon className="w-3 h-3" />
-                            View
-                          </a>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">No proof</span>
-                        )}
-                      </td>
-                      <td className="px-4 sm:px-6 py-3 text-xs text-muted-foreground">
-                        {new Date(payment.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 sm:px-6 py-3 text-center">
-                        {payment.status === 'pending' ? (
-                          <button
-                            onClick={() => confirmPayment(payment.id)}
-                            disabled={confirmingId === payment.id}
-                            className="text-xs font-medium text-green-600 hover:underline disabled:opacity-50 flex items-center gap-1 w-fit mx-auto"
-                          >
-                            <CheckCircle className="w-3 h-3" />
-                            Confirm
-                          </button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">
-                            {payment.status === 'confirmed' ? 'Confirmed' : 'Rejected'}
-                          </span>
-                        )}
-                      </td>
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            {loading ? (
+              <div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>
+            ) : filtered.length === 0 ? (
+              <div className="p-12 text-center">
+                <Clock className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-40" />
+                <p className="text-muted-foreground text-sm">No payments in this category.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/40">
+                      {['Order', 'Customer', 'Amount', 'Method', 'Status', 'Proof', 'Date', ''].map(h => (
+                        <th key={h} className="text-left px-4 sm:px-6 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {filteredPayments.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">
-                <p>No payments found</p>
+                  </thead>
+                  <tbody>
+                    {filtered.map(order => (
+                      <tr key={order.id} className="border-b border-border hover:bg-muted/30 transition">
+                        <td className="px-4 sm:px-6 py-3">
+                          <Link href={`/admin/orders/${order.id}`} className="text-primary hover:underline font-medium text-xs">
+                            {order.order_number}
+                          </Link>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3">
+                          <p className="font-medium text-foreground">{order.customers?.full_name ?? 'N/A'}</p>
+                          <p className="text-xs text-muted-foreground">{order.customers?.email}</p>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 font-semibold text-foreground">
+                          ${Number(order.total_amount).toFixed(2)}
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 text-muted-foreground capitalize text-xs">
+                          {order.payment_method?.replace('_', ' ')}
+                        </td>
+                        <td className="px-4 sm:px-6 py-3">
+                          <span className={`px-2 py-1 rounded-md text-xs font-medium ${paymentColor(order.payment_status)}`}>
+                            {paymentLabel(order.payment_status)}
+                          </span>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3">
+                          {order.payment_proof_url ? (
+                            <a
+                              href={order.payment_proof_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-primary hover:underline text-xs"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              View
+                            </a>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">None</span>
+                          )}
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 text-xs text-muted-foreground">
+                          {new Date(order.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 sm:px-6 py-3">
+                          {order.payment_status === 'uploaded' ? (
+                            <button
+                              onClick={() => handleConfirm(order.id)}
+                              disabled={confirmingId === order.id}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-medium transition disabled:opacity-50"
+                            >
+                              <CheckCircle className="w-3 h-3" />
+                              {confirmingId === order.id ? '…' : 'Confirm'}
+                            </button>
+                          ) : order.payment_status === 'confirmed' ? (
+                            <span className="flex items-center gap-1 text-green-400 text-xs">
+                              <CheckCircle className="w-3 h-3" />
+                              Done
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>

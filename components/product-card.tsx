@@ -2,16 +2,18 @@
 
 import { useState } from 'react'
 import { useCart } from '@/lib/cart-context'
-import { ShoppingCart, Plus, Minus } from 'lucide-react'
+import type { Product } from '@/lib/db'
+import { ShoppingCart, Plus, Minus, Check } from 'lucide-react'
 
 interface ProductCardProps {
   id: string
   name: string
-  description: string
+  description: string | null
   price: number
-  image_url?: string
+  image_url: string | null
+  category: string
   is_available: boolean
-  inventory?: Array<{ quantity_in_stock: number }>
+  stock_qty: number
 }
 
 export function ProductCard({
@@ -21,90 +23,116 @@ export function ProductCard({
   price,
   image_url,
   is_available,
-  inventory,
+  stock_qty,
+  category,
 }: ProductCardProps) {
   const { addItem } = useCart()
   const [quantity, setQuantity] = useState(1)
   const [added, setAdded] = useState(false)
 
-  const inStock = inventory?.[0]?.quantity_in_stock ?? 0
-  const isOutOfStock = inStock === 0 || !is_available
+  // stock_qty lives directly on bc_products
+  const isOutOfStock = !is_available || stock_qty === 0
 
-  const handleAddToCart = () => {
+  const handleAdd = () => {
     addItem({
       productId: id,
       name,
       price,
       quantity,
-      image_url,
+      image_url: image_url ?? undefined,
     })
     setAdded(true)
-    setTimeout(() => setAdded(false), 2000)
+    setTimeout(() => setAdded(false), 1800)
   }
 
   return (
-    <div className="bg-card rounded-lg overflow-hidden border border-border hover:shadow-lg transition-shadow">
-      {image_url ? (
-        <img
-          src={image_url}
-          alt={name}
-          className="w-full h-48 object-cover bg-muted"
-        />
-      ) : (
-        <div className="w-full h-48 bg-muted flex items-center justify-center">
-          <div className="text-muted-foreground text-sm">No image</div>
-        </div>
-      )}
+    <div className="bg-card border border-border rounded-xl overflow-hidden group hover:border-border/60 transition-all duration-200">
+      {/* Image */}
+      <div className="relative h-48 overflow-hidden bg-muted">
+        {image_url ? (
+          <img
+            src={image_url}
+            alt={name}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-4xl">🍕</div>
+        )}
+        {/* Category pill */}
+        <span className="absolute top-3 left-3 px-2.5 py-1 bg-black/60 backdrop-blur-sm rounded-full text-xs font-medium text-white capitalize">
+          {category}
+        </span>
+        {/* Price pill */}
+        <span className="absolute top-3 right-3 px-2.5 py-1 bg-primary rounded-full text-xs font-bold text-primary-foreground">
+          ${Number(price).toFixed(2)}
+        </span>
+      </div>
 
+      {/* Content */}
       <div className="p-4">
-        <h3 className="font-semibold text-lg mb-1 line-clamp-2">{name}</h3>
-        <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{description}</p>
+        <h3 className="font-semibold text-foreground mb-1.5 leading-snug">{name}</h3>
 
-        <div className="flex justify-between items-end">
-          <div>
-            <p className="text-2xl font-bold text-primary">${price.toFixed(2)}</p>
-            {!isOutOfStock && (
-              <p className="text-xs text-muted-foreground">
-                {inStock} in stock
-              </p>
-            )}
-          </div>
-        </div>
+        {description && (
+          <p className="text-muted-foreground text-xs leading-relaxed line-clamp-2 mb-3">
+            {description}
+          </p>
+        )}
+
+        {/* Stock indicator */}
+        {!isOutOfStock && stock_qty <= 10 && (
+          <p className="text-yellow-400 text-xs mb-3 font-medium">
+            Only {stock_qty} left
+          </p>
+        )}
 
         {isOutOfStock ? (
           <button
             disabled
-            className="w-full mt-4 py-2 px-3 bg-muted text-muted-foreground rounded-lg font-medium cursor-not-allowed"
+            className="w-full py-2.5 bg-muted text-muted-foreground rounded-xl text-sm font-medium cursor-not-allowed"
           >
             Out of Stock
           </button>
         ) : (
-          <div className="flex gap-2 mt-4">
-            <div className="flex items-center border border-border rounded-lg">
+          <div className="flex items-center gap-2">
+            {/* Qty selector */}
+            <div className="flex items-center border border-border rounded-xl overflow-hidden">
               <button
-                onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                className="p-1 hover:bg-muted transition"
+                onClick={() => setQuantity(q => Math.max(1, q - 1))}
+                className="px-2.5 py-2 hover:bg-muted transition text-foreground"
               >
-                <Minus className="w-4 h-4" />
+                <Minus className="w-3 h-3" />
               </button>
-              <span className="px-3 py-1 text-sm font-medium">{quantity}</span>
+              <span className="px-3 py-2 text-sm font-semibold text-foreground min-w-[2rem] text-center">
+                {quantity}
+              </span>
               <button
-                onClick={() => setQuantity(Math.min(inStock, quantity + 1))}
-                className="p-1 hover:bg-muted transition"
+                onClick={() => setQuantity(q => Math.min(stock_qty, q + 1))}
+                className="px-2.5 py-2 hover:bg-muted transition text-foreground"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-3 h-3" />
               </button>
             </div>
+
+            {/* Add to cart */}
             <button
-              onClick={handleAddToCart}
-              className={`flex-1 py-2 px-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${
+              onClick={handleAdd}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all ${
                 added
                   ? 'bg-green-600 text-white'
-                  : 'bg-primary text-white hover:bg-primary/90'
+                  : 'bg-primary text-primary-foreground hover:bg-accent'
               }`}
             >
-              <ShoppingCart className="w-4 h-4" />
-              {added ? 'Added!' : 'Add'}
+              {added ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  Added
+                </>
+              ) : (
+                <>
+                  <ShoppingCart className="w-4 h-4" />
+                  Add
+                </>
+              )}
             </button>
           </div>
         )}

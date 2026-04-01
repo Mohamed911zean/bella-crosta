@@ -1,329 +1,265 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useEffect, useState, useTransition } from 'react'
+import { useParams } from 'next/navigation'
 import { AdminSidebar } from '@/components/admin-sidebar'
-import { supabase } from '@/lib/db'
 import { getOrderById } from '@/lib/db'
-import { Menu, ArrowLeft, CheckCircle, Image as ImageIcon } from 'lucide-react'
+import { updateOrderStatus, confirmPayment } from '@/lib/actions'
+import type { Order } from '@/lib/db'
+import { Menu, ArrowLeft, CheckCircle, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
 
+const ORDER_STATUSES = ['pending', 'confirmed', 'preparing', 'delivered', 'cancelled'] as const
+
 export default function AdminOrderDetailPage() {
-  const router = useRouter()
   const params = useParams()
   const orderId = params.id as string
 
-  const [user, setUser] = useState<any>(null)
-  const [order, setOrder] = useState<any>(null)
+  const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [updatingStatus, setUpdatingStatus] = useState(false)
   const [selectedStatus, setSelectedStatus] = useState('')
+  const [isPending, startTransition] = useTransition()
 
-  useEffect(() => {
-    checkAuth()
-  }, [])
-
-  const checkAuth = async () => {
-    try {
-      const {
-        data: { user: currentUser },
-      } = await supabase.auth.getUser()
-
-      if (!currentUser) {
-        router.push('/admin/login')
-        return
-      }
-
-      const { data: adminData } = await supabase
-        .from('admin_users')
-        .select('*')
-        .eq('id', currentUser.id)
-        .single()
-
-      if (!adminData) {
-        router.push('/admin/login')
-        return
-      }
-
-      setUser(currentUser)
-      loadOrder()
-    } catch (err) {
-      router.push('/admin/login')
-    } finally {
+  const loadOrder = () => {
+    getOrderById(orderId).then(data => {
+      setOrder(data)
+      setSelectedStatus(data?.status ?? '')
       setLoading(false)
-    }
+    })
   }
 
-  const loadOrder = async () => {
-    try {
-      const orderData = await getOrderById(orderId)
-      setOrder(orderData)
-      setSelectedStatus(orderData?.status || '')
-    } catch (err) {
-      console.error('Error loading order:', err)
-    }
+  useEffect(() => { loadOrder() }, [orderId])
+
+  const handleUpdateStatus = () => {
+    if (!selectedStatus || selectedStatus === order?.status) return
+    startTransition(async () => {
+      await updateOrderStatus(orderId, selectedStatus as Order['status'])
+      loadOrder()
+    })
   }
 
-  const updateOrderStatus = async () => {
-    if (!selectedStatus || selectedStatus === order.status) return
-
-    setUpdatingStatus(true)
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: selectedStatus })
-        .eq('id', orderId)
-
-      if (error) throw error
-
-      await loadOrder()
-    } catch (err) {
-      console.error('Error updating status:', err)
-    } finally {
-      setUpdatingStatus(false)
-    }
+  const handleConfirmPayment = () => {
+    startTransition(async () => {
+      await confirmPayment(orderId)
+      loadOrder()
+    })
   }
 
-  const confirmPayment = async () => {
-    if (!order.payments?.[0]) return
+  const statusColor = (s: string) => ({
+    pending:   'bg-yellow-500/15 text-yellow-400',
+    confirmed: 'bg-blue-500/15 text-blue-400',
+    preparing: 'bg-primary/15 text-primary',
+    delivered: 'bg-green-500/15 text-green-400',
+    cancelled: 'bg-destructive/15 text-destructive',
+  }[s] ?? 'bg-muted text-muted-foreground')
 
-    setUpdatingStatus(true)
-    try {
-      const { error } = await supabase
-        .from('payments')
-        .update({
-          status: 'confirmed',
-          verified_at: new Date().toISOString(),
-          verified_by: user.id,
-        })
-        .eq('id', order.payments[0].id)
-
-      if (error) throw error
-
-      // Update order payment status
-      await supabase
-        .from('orders')
-        .update({ payment_status: 'confirmed' })
-        .eq('id', orderId)
-
-      await loadOrder()
-    } catch (err) {
-      console.error('Error confirming payment:', err)
-    } finally {
-      setUpdatingStatus(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    )
-  }
-
-  if (!order) {
-    return (
-      <div className="flex h-screen bg-background">
-        <div className="hidden md:block w-64">
-          <AdminSidebar />
-        </div>
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-muted-foreground">Order not found</p>
-        </div>
-      </div>
-    )
-  }
+  const paymentColor = (s: string) => ({
+    confirmed: 'bg-green-500/15 text-green-400',
+    uploaded:  'bg-yellow-500/15 text-yellow-400',
+    pending:   'bg-muted text-muted-foreground',
+  }[s] ?? 'bg-muted text-muted-foreground')
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Desktop Sidebar */}
-      <div className="hidden md:block w-64">
+      <div className="hidden md:block w-64 shrink-0">
         <AdminSidebar />
       </div>
 
-      {/* Mobile Sidebar */}
       {mobileMenuOpen && (
         <AdminSidebar mobile onClose={() => setMobileMenuOpen(false)} />
       )}
 
-      {/* Main Content */}
       <div className="flex-1 overflow-auto">
         {/* Header */}
         <div className="bg-card border-b border-border px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/admin/orders"
-              className="text-primary hover:underline flex items-center gap-2"
-            >
+          <div className="flex items-center gap-3">
+            <Link href="/admin/orders" className="text-muted-foreground hover:text-primary transition flex items-center gap-1.5 text-sm">
               <ArrowLeft className="w-4 h-4" />
               <span className="hidden sm:inline">Orders</span>
             </Link>
-            <h1 className="text-2xl font-bold">{order.order_number}</h1>
+            <span className="text-border">/</span>
+            <h1 className="text-base font-bold text-foreground">{order?.order_number ?? '…'}</h1>
           </div>
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 hover:bg-muted rounded-lg transition"
-          >
-            <Menu className="w-6 h-6" />
+          <button onClick={() => setMobileMenuOpen(true)} className="md:hidden p-2 hover:bg-muted rounded-lg transition">
+            <Menu className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-4 sm:p-6 max-w-4xl">
-          <div className="grid lg:grid-cols-3 gap-6">
-            {/* Main Content */}
-            <div className="lg:col-span-2 space-y-6">
-              {/* Order Summary */}
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-4">Order Summary</h2>
-                <div className="space-y-2 mb-4">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Total Amount</span>
-                    <span className="font-semibold">${order.total_amount.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Order Date</span>
-                    <span>{new Date(order.created_at).toLocaleString()}</span>
+        {loading ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">Loading order…</div>
+        ) : !order ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">Order not found.</div>
+        ) : (
+          <div className="p-4 sm:p-6 max-w-4xl">
+            <div className="grid lg:grid-cols-3 gap-6">
+
+              {/* ── Left column ── */}
+              <div className="lg:col-span-2 space-y-5">
+
+                {/* Order summary */}
+                <div className="bg-card border border-border rounded-xl p-5">
+                  <h2 className="font-semibold text-foreground mb-4">Order Summary</h2>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-muted-foreground mb-0.5">Order number</p>
+                      <p className="font-semibold text-foreground">{order.order_number}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground mb-0.5">Date</p>
+                      <p className="text-foreground">{new Date(order.created_at).toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground mb-0.5">Total</p>
+                      <p className="font-bold text-primary text-lg">${Number(order.total_amount).toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground mb-0.5">Payment method</p>
+                      <p className="font-medium text-foreground capitalize">{order.payment_method?.replace('_', ' ')}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Order Items */}
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-4">Items</h2>
-                <div className="space-y-3">
-                  {order.order_items?.map((item: any) => (
-                    <div key={item.id} className="flex justify-between pb-3 border-b border-border last:border-b-0">
-                      <div>
-                        <p className="font-medium">{item.products?.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          Qty: {item.quantity}
-                        </p>
+                {/* Items */}
+                <div className="bg-card border border-border rounded-xl p-5">
+                  <h2 className="font-semibold text-foreground mb-4">Items</h2>
+                  <div className="space-y-3">
+                    {order.order_items?.map(item => (
+                      <div key={item.id} className="flex justify-between items-start pb-3 border-b border-border last:border-0 last:pb-0">
+                        <div>
+                          <p className="font-medium text-foreground text-sm">{item.product_name}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {item.quantity} × ${Number(item.unit_price).toFixed(2)}
+                          </p>
+                        </div>
+                        <p className="font-semibold text-foreground text-sm">${Number(item.subtotal).toFixed(2)}</p>
                       </div>
-                      <div className="text-right">
-                        <p className="font-semibold">${item.subtotal.toFixed(2)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          ${item.unit_price.toFixed(2)} each
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Delivery Info */}
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-4">Delivery Information</h2>
-                <p className="text-muted-foreground mb-1">Address</p>
-                <p className="font-medium mb-4">{order.delivery_address}</p>
-                {order.delivery_notes && (
-                  <>
-                    <p className="text-muted-foreground mb-1">Notes</p>
-                    <p className="text-sm">{order.delivery_notes}</p>
-                  </>
-                )}
-              </div>
-
-              {/* Customer Info */}
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h2 className="text-xl font-bold mb-4">Customer Information</h2>
-                <div className="space-y-2 text-sm">
-                  <div>
-                    <p className="text-muted-foreground mb-1">Name</p>
-                    <p className="font-medium">{order.customers?.full_name}</p>
+                    ))}
                   </div>
-                  <div>
-                    <p className="text-muted-foreground mb-1">Email</p>
-                    <p className="font-medium">{order.customers?.email}</p>
-                  </div>
-                  {order.customers?.phone && (
-                    <div>
-                      <p className="text-muted-foreground mb-1">Phone</p>
-                      <p className="font-medium">{order.customers.phone}</p>
-                    </div>
-                  )}
                 </div>
-              </div>
-            </div>
 
-            {/* Sidebar */}
-            <div className="space-y-6">
-              {/* Order Status */}
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h3 className="font-bold mb-4">Order Status</h3>
-                <select
-                  value={selectedStatus}
-                  onChange={(e) => setSelectedStatus(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="confirmed">Confirmed</option>
-                  <option value="preparing">Preparing</option>
-                  <option value="ready">Ready</option>
-                  <option value="completed">Completed</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-                <button
-                  onClick={updateOrderStatus}
-                  disabled={updatingStatus || selectedStatus === order.status}
-                  className="w-full bg-primary text-white py-2 rounded-lg font-semibold hover:bg-primary/90 transition disabled:opacity-50"
-                >
-                  Update Status
-                </button>
-              </div>
-
-              {/* Payment Section */}
-              {order.payments?.length > 0 && (
-                <div className="bg-card border border-border rounded-lg p-6">
-                  <h3 className="font-bold mb-4">Payment</h3>
-                  <div className="space-y-3 text-sm mb-4">
+                {/* Delivery */}
+                <div className="bg-card border border-border rounded-xl p-5">
+                  <h2 className="font-semibold text-foreground mb-4">Delivery Information</h2>
+                  <div className="space-y-3 text-sm">
                     <div>
-                      <p className="text-muted-foreground mb-1">Status</p>
-                      <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                        order.payments[0]?.status === 'confirmed'
-                          ? 'bg-green-500/20 text-green-700'
-                          : 'bg-yellow-500/20 text-yellow-700'
-                      }`}>
-                        {order.payments[0]?.status}
-                      </span>
+                      <p className="text-muted-foreground mb-0.5">Address</p>
+                      <p className="text-foreground">{order.delivery_address ?? '—'}</p>
                     </div>
-                    <div>
-                      <p className="text-muted-foreground mb-1">Amount</p>
-                      <p className="font-semibold">${order.payments[0]?.amount.toFixed(2)}</p>
-                    </div>
-                    {order.payments[0]?.proof_image_url && (
+                    {order.delivery_notes && (
                       <div>
-                        <p className="text-muted-foreground mb-1">Proof</p>
-                        <a
-                          href={order.payments[0].proof_image_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary hover:underline text-xs flex items-center gap-1"
-                        >
-                          <ImageIcon className="w-3 h-3" />
-                          View Proof
-                        </a>
+                        <p className="text-muted-foreground mb-0.5">Notes</p>
+                        <p className="text-foreground">{order.delivery_notes}</p>
                       </div>
                     )}
                   </div>
+                </div>
 
-                  {order.payments[0]?.status !== 'confirmed' && (
+                {/* Customer */}
+                <div className="bg-card border border-border rounded-xl p-5">
+                  <h2 className="font-semibold text-foreground mb-4">Customer</h2>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground w-16">Name</span>
+                      <span className="font-medium text-foreground">{order.customers?.full_name ?? '—'}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground w-16">Email</span>
+                      <span className="text-foreground">{order.customers?.email ?? '—'}</span>
+                    </div>
+                    {order.customers?.phone && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground w-16">Phone</span>
+                        <span className="text-foreground">{order.customers.phone}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Right column ── */}
+              <div className="space-y-5">
+
+                {/* Order status */}
+                <div className="bg-card border border-border rounded-xl p-5">
+                  <h3 className="font-semibold text-foreground mb-3">Order Status</h3>
+                  <div className="mb-1">
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-medium capitalize ${statusColor(order.status)}`}>
+                      Current: {order.status}
+                    </span>
+                  </div>
+                  <select
+                    value={selectedStatus}
+                    onChange={e => setSelectedStatus(e.target.value)}
+                    className="w-full mt-3 px-3 py-2 border border-border rounded-xl bg-input text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    {ORDER_STATUSES.map(s => (
+                      <option key={s} value={s} className="capitalize">{s}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleUpdateStatus}
+                    disabled={isPending || selectedStatus === order.status}
+                    className="w-full mt-3 bg-primary text-primary-foreground py-2 rounded-xl text-sm font-semibold hover:bg-accent transition disabled:opacity-40"
+                  >
+                    {isPending ? 'Updating…' : 'Update Status'}
+                  </button>
+                </div>
+
+                {/* Payment */}
+                <div className="bg-card border border-border rounded-xl p-5">
+                  <h3 className="font-semibold text-foreground mb-3">Payment</h3>
+                  <div className="space-y-2 text-sm mb-4">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Status</span>
+                      <span className={`px-2 py-0.5 rounded-md text-xs font-medium capitalize ${paymentColor(order.payment_status)}`}>
+                        {order.payment_status}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Amount</span>
+                      <span className="font-semibold text-foreground">${Number(order.total_amount).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Method</span>
+                      <span className="text-foreground capitalize">{order.payment_method?.replace('_', ' ')}</span>
+                    </div>
+                  </div>
+
+                  {order.payment_proof_url && (
+                    <a
+                      href={order.payment_proof_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 text-primary hover:underline text-xs mb-4"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      View payment proof
+                    </a>
+                  )}
+
+                  {order.payment_status !== 'confirmed' && (
                     <button
-                      onClick={confirmPayment}
-                      disabled={updatingStatus}
-                      className="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                      onClick={handleConfirmPayment}
+                      disabled={isPending}
+                      className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2 rounded-xl text-sm font-semibold transition disabled:opacity-40"
                     >
                       <CheckCircle className="w-4 h-4" />
-                      Confirm Payment
+                      {isPending ? 'Confirming…' : 'Confirm Payment'}
                     </button>
                   )}
+
+                  {order.payment_status === 'confirmed' && (
+                    <div className="flex items-center gap-2 text-green-400 text-sm">
+                      <CheckCircle className="w-4 h-4" />
+                      Payment confirmed
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   )
