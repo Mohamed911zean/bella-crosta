@@ -1,191 +1,215 @@
 'use server'
 
 import { supabase } from './db'
-import { notifyNewOrder, notifyPaymentReceived } from './telegram'
-import { getOrderById } from './db'
+import { getSessionToken } from './auth'
+import { createClient } from '@supabase/supabase-js'
 
-// Auth Actions
-export async function signUp(email: string, password: string, fullName: string) {
-  try {
-    // Create auth user
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-    })
+// ─── Authed Supabase client (uses the current session token from cookie) ──────
+async function getAuthedClient() {
+  const token = await getSessionToken()
+  if (!token) throw new Error('Not authenticated')
 
-    if (authError) {
-      return { success: false, error: authError.message }
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+      auth: { persistSession: false, autoRefreshToken: false },
     }
-
-    if (!authData.user) {
-      return { success: false, error: 'User creation failed' }
-    }
-
-    // Create customer profile
-    const { error: profileError } = await supabase
-      .from('customers')
-      .insert({
-        id: authData.user.id,
-        email,
-        full_name: fullName,
-      })
-
-    if (profileError) {
-      return { success: false, error: profileError.message }
-    }
-
-    return { success: true, user: authData.user }
-  } catch (error) {
-    return { success: false, error: 'An error occurred' }
-  }
+  )
 }
 
-// Order Actions
+// ─── Types ────────────────────────────────────────────────────────────────────
+export type ActionResult<T = undefined> =
+  | { success: true; data?: T }
+  | { success: false; error: string }
+
+// ─── Create Order ─────────────────────────────────────────────────────────────
 export async function createOrder(
   customerId: string,
-  items: Array<{ productId: string; quantity: number; price: number }>,
+  items: Array<{ productId: string; quantity: number; price: number; name: string }>,
   totalAmount: number,
   deliveryAddress: string,
-  deliveryNotes?: string
-) {
+  deliveryNotes: string,
+  paymentMethod: 'instapay' | 'vodafone_cash',
+  paymentProofUrl: string
+): Promise<ActionResult<{ orderId: string; orderNumber: string }>> {
   try {
-    // Generate order number
-    const orderNumber = `ORD-${Date.now()}`
+    const db = await getAuthedClient()
+    const orderNumber = `BC-${Date.now()}`
 
-    // Create order
-    const { data: orderData, error: orderError } = await supabase
-      .from('orders')
+    // 1. Insert order
+    const { data: orderData, error: orderError } = await db
+      .from('bc_orders')
       .insert({
         customer_id: customerId,
         order_number: orderNumber,
         total_amount: totalAmount,
         delivery_address: deliveryAddress,
         delivery_notes: deliveryNotes || '',
+        payment_method: paymentMethod,
+        payment_status: 'uploaded',
+        payment_proof_url: paymentProofUrl,
         status: 'pending',
-        payment_status: 'pending',
       })
       .select()
       .single()
 
-    if (orderError) {
-      return { success: false, error: orderError.message }
+    if (orderError || !orderData) {
+      return { success: false, error: orderError?.message ?? 'Failed to create order' }
     }
 
-    if (!orderData) {
-      return { success: false, error: 'Failed to create order' }
-    }
-
-    // Create order items
-    const orderItems = items.map((item) => ({
+    // 2. Insert order items
+    const orderItems = items.map(item => ({
       order_id: orderData.id,
       product_id: item.productId,
+      product_name: item.name,
       quantity: item.quantity,
       unit_price: item.price,
       subtotal: item.price * item.quantity,
     }))
 
-    const { error: itemsError } = await supabase
-      .from('order_items')
+    const { error: itemsError } = await db
+      .from('bc_order_items')
       .insert(orderItems)
 
     if (itemsError) {
       return { success: false, error: itemsError.message }
     }
 
-    // Deduct inventory
+    // 3. Decrement stock (best-effort — don't fail order if this errors)
     for (const item of items) {
-      const { data: inventory } = await supabase
-        .from('inventory')
-        .select('quantity_in_stock')
-        .eq('product_id', item.productId)
+      const { data: product } = await supabase
+        .from('bc_products')
+        .select('stock_qty')
+        .eq('id', item.productId)
         .single()
 
-      if (inventory) {
+      if (product) {
         await supabase
-          .from('inventory')
-          .update({
-            quantity_in_stock: Math.max(0, inventory.quantity_in_stock - item.quantity),
-          })
-          .eq('product_id', item.productId)
+          .from('bc_products')
+          .update({ stock_qty: Math.max(0, product.stock_qty - item.quantity) })
+          .eq('id', item.productId)
       }
     }
 
-    // Get customer details for notification
-    const { data: customerData } = await supabase
-      .from('customers')
-      .select('full_name')
-      .eq('id', customerId)
-      .single()
-
-    // Get product names for notification
-    const itemNames = await Promise.all(
-      items.map(async (item) => {
-        const { data } = await supabase
-          .from('products')
-          .select('name')
-          .eq('id', item.productId)
-          .single()
-        return { name: data?.name || 'Unknown', quantity: item.quantity }
-      })
-    )
-
-    // Send Telegram notification
-    await notifyNewOrder({
-      orderNumber,
-      customerName: customerData?.full_name || 'Customer',
-      totalAmount,
-      items: itemNames,
-      deliveryAddress,
-    })
-
-    return { success: true, orderId: orderData.id, orderNumber }
-  } catch (error) {
-    return { success: false, error: 'An error occurred while creating the order' }
+    return { success: true, data: { orderId: orderData.id, orderNumber } }
+  } catch (err) {
+    console.error('createOrder error:', err)
+    return { success: false, error: 'An unexpected error occurred. Please try again.' }
   }
 }
 
-// Payment Actions
-export async function uploadPaymentProof(
+// ─── Update Order Status (admin) ──────────────────────────────────────────────
+export async function updateOrderStatus(
   orderId: string,
-  proofImageUrl: string,
-  amount: number
-) {
+  status: 'pending' | 'confirmed' | 'preparing' | 'delivered' | 'cancelled'
+): Promise<ActionResult> {
   try {
-    const { data, error } = await supabase
-      .from('payments')
-      .insert({
-        order_id: orderId,
-        amount,
-        payment_method: 'bank_transfer',
-        proof_image_url: proofImageUrl,
-        proof_uploaded_at: new Date().toISOString(),
-        status: 'pending',
-      })
-      .select()
-      .single()
+    const db = await getAuthedClient()
 
-    if (error) {
-      return { success: false, error: error.message }
-    }
-
-    // Update order payment status
-    await supabase
-      .from('orders')
-      .update({ payment_status: 'awaiting_confirmation' })
+    const { error } = await db
+      .from('bc_orders')
+      .update({ status })
       .eq('id', orderId)
 
-    // Get order details for notification
-    const orderData = await getOrderById(orderId)
-    if (orderData) {
-      await notifyPaymentReceived({
-        orderNumber: orderData.order_number,
-        customerName: orderData.customers?.full_name || 'Customer',
-        totalAmount: orderData.total_amount,
-      })
-    }
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (err) {
+    console.error('updateOrderStatus error:', err)
+    return { success: false, error: 'Failed to update order status.' }
+  }
+}
 
-    return { success: true, paymentId: data.id }
-  } catch (error) {
-    return { success: false, error: 'An error occurred while uploading payment proof' }
+// ─── Confirm Payment (admin) ──────────────────────────────────────────────────
+export async function confirmPayment(orderId: string): Promise<ActionResult> {
+  try {
+    const db = await getAuthedClient()
+
+    const { error } = await db
+      .from('bc_orders')
+      .update({ payment_status: 'confirmed', status: 'confirmed' })
+      .eq('id', orderId)
+
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (err) {
+    console.error('confirmPayment error:', err)
+    return { success: false, error: 'Failed to confirm payment.' }
+  }
+}
+
+// ─── Update Product (admin) ───────────────────────────────────────────────────
+export async function updateProduct(
+  productId: string,
+  updates: {
+    name?: string
+    description?: string
+    price?: number
+    image_url?: string
+    category?: string
+    is_featured?: boolean
+    is_available?: boolean
+    stock_qty?: number
+  }
+): Promise<ActionResult> {
+  try {
+    const db = await getAuthedClient()
+
+    const { error } = await db
+      .from('bc_products')
+      .update(updates)
+      .eq('id', productId)
+
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (err) {
+    console.error('updateProduct error:', err)
+    return { success: false, error: 'Failed to update product.' }
+  }
+}
+
+// ─── Create Product (admin) ───────────────────────────────────────────────────
+export async function createProduct(product: {
+  name: string
+  description?: string
+  price: number
+  image_url?: string
+  category: string
+  is_featured?: boolean
+  stock_qty?: number
+}): Promise<ActionResult<{ id: string }>> {
+  try {
+    const db = await getAuthedClient()
+
+    const { data, error } = await db
+      .from('bc_products')
+      .insert({ ...product, is_available: true })
+      .select('id')
+      .single()
+
+    if (error || !data) return { success: false, error: error?.message ?? 'Failed to create product' }
+    return { success: true, data: { id: data.id } }
+  } catch (err) {
+    console.error('createProduct error:', err)
+    return { success: false, error: 'Failed to create product.' }
+  }
+}
+
+// ─── Delete Product (admin) ───────────────────────────────────────────────────
+export async function deleteProduct(productId: string): Promise<ActionResult> {
+  try {
+    const db = await getAuthedClient()
+
+    const { error } = await db
+      .from('bc_products')
+      .update({ is_available: false })
+      .eq('id', productId)
+
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (err) {
+    console.error('deleteProduct error:', err)
+    return { success: false, error: 'Failed to delete product.' }
   }
 }

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Header } from '@/components/header'
 import { ProductCard } from '@/components/product-card'
-import { getFeaturedProducts, getCategories } from '@/lib/db'
+import { getFeaturedProducts } from '@/lib/db'
 import { ArrowRight, Clock, Truck, Shield } from 'lucide-react'
 
 export const metadata = {
@@ -11,7 +11,7 @@ export const metadata = {
 
 export default async function Home() {
   const featured = await getFeaturedProducts()
-  const categories = await getCategories()
+  
 
   return (
     <div className="min-h-screen bg-background">
@@ -75,26 +75,7 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* Categories Section */}
-      {categories.length > 0 && (
-        <section className="bg-background border-b border-border">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-            <h2 className="text-3xl font-bold mb-8">Categories</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {categories.map((category) => (
-                <Link
-                  key={category.id}
-                  href={`/menu?category=${category.id}`}
-                  className="p-4 bg-card border border-border rounded-lg hover:border-primary hover:bg-primary/5 transition text-center"
-                >
-                  <div className="text-3xl mb-2">{category.icon || '🍕'}</div>
-                  <h3 className="font-semibold">{category.name}</h3>
-                </Link>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
+     
 
       {/* Featured Products Section */}
       {featured.length > 0 && (

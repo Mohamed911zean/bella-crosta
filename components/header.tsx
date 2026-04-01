@@ -1,73 +1,173 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import { useCart } from '@/lib/cart-context'
-import { ShoppingCart, LogOut, Menu, X } from 'lucide-react'
-import { useState } from 'react'
+import { ShoppingCart, Menu, X, User, ChevronDown } from 'lucide-react'
+
+interface SessionUser {
+  id: string
+  email: string
+  role: string
+}
 
 export function Header() {
   const { totalItems } = useCart()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [user, setUser] = useState<SessionUser | null>(null)
+
+  useEffect(() => {
+    async function fetchSession() {
+      const response = await fetch('/api/auth/session')
+      if (!response.ok) return
+      const data = await response.json()
+      setUser(data.user)
+    }
+
+    fetchSession()
+  }, [])
+
+  const initials = user?.email
+    ? user.email
+        .split('@')[0]
+        .split(/[-_.]/)
+        .map((part) => part[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase()
+    : 'BC'
 
   return (
-    <header className="bg-background border-b border-border sticky top-0 z-40">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center text-white font-bold">
-              BC
-            </div>
-            <span className="hidden sm:inline font-bold text-lg">Bella Crosta</span>
+    <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-2xl shadow-sm">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+        <Link href="/" className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-linear-to-br from-primary to-accent text-white shadow-lg shadow-primary/20">
+            <span className="text-lg font-black">🍕</span>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-[0.32em] text-primary/90">Bella Crosta</p>
+            <p className="text-lg font-semibold text-foreground">Handcrafted Pizza Kitchen</p>
+          </div>
+        </Link>
+
+        <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-foreground/90">
+          <Link href="/" className="transition hover:text-primary">Home</Link>
+          <Link href="/menu" className="transition hover:text-primary">Menu</Link>
+          <Link href="/#featured" className="transition hover:text-primary">Featured</Link>
+          <Link href="/auth/profile" className="transition hover:text-primary">Profile</Link>
+        </nav>
+
+        <div className="flex items-center gap-3">
+          <Link
+            href="/cart"
+            className="relative inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-card text-foreground transition hover:border-primary hover:text-primary"
+          >
+            <ShoppingCart className="w-5 h-5" />
+            {totalItems > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">
+                {totalItems}
+              </span>
+            )}
           </Link>
 
-          <nav className="hidden md:flex items-center gap-6">
-            <Link href="/" className="text-foreground hover:text-primary transition">
-              Home
-            </Link>
-            <Link href="/menu" className="text-foreground hover:text-primary transition">
-              Menu
-            </Link>
-          </nav>
-
-          <div className="flex items-center gap-4">
-            <Link
-              href="/cart"
-              className="relative p-2 text-foreground hover:bg-muted rounded-lg transition"
-            >
-              <ShoppingCart className="w-6 h-6" />
-              {totalItems > 0 && (
-                <span className="absolute top-1 right-1 bg-primary text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">
-                  {totalItems}
+          {user ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setProfileMenuOpen((open) => !open)}
+                className="inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-3 py-2 text-sm font-medium text-foreground transition hover:border-primary"
+              >
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold">
+                  {initials}
                 </span>
+                <span className="hidden sm:inline">My account</span>
+                <ChevronDown className="w-4 h-4" />
+              </button>
+
+              {profileMenuOpen && (
+                <div className="absolute right-0 top-14 z-20 w-56 overflow-hidden rounded-3xl border border-border bg-background shadow-xl shadow-black/10">
+                  <div className="px-4 py-3 border-b border-border text-sm text-muted-foreground">
+                    Signed in as
+                    <div className="mt-1 font-semibold text-foreground break-all">{user.email}</div>
+                  </div>
+                  <div className="grid gap-1 p-3">
+                    <Link
+                      href="/auth/profile"
+                      className="rounded-2xl px-3 py-2 text-sm text-foreground transition hover:bg-muted"
+                    >
+                      Profile
+                    </Link>
+                    <Link
+                      href="/auth/logout"
+                      className="rounded-2xl px-3 py-2 text-sm text-foreground transition hover:bg-muted"
+                    >
+                      Logout
+                    </Link>
+                  </div>
+                </div>
               )}
-            </Link>
+            </div>
+          ) : (
+            <div className="hidden items-center gap-2 sm:flex">
+              <Link
+                href="/auth/login"
+                className="inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-4 py-2 text-sm text-foreground transition hover:border-primary hover:text-primary"
+              >
+                <User className="w-4 h-4" />
+                Sign in
+              </Link>
+              <Link
+                href="/auth/signup"
+                className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent"
+              >
+                Sign up
+              </Link>
+            </div>
+          )}
 
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 text-foreground hover:bg-muted rounded-lg transition"
-            >
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+            className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border bg-card text-foreground transition hover:border-primary lg:hidden"
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
         </div>
+      </div>
 
-        {mobileMenuOpen && (
-          <nav className="md:hidden pb-4 flex flex-col gap-2">
-            <Link
-              href="/"
-              className="px-4 py-2 text-foreground hover:bg-muted rounded-lg transition"
-            >
+      {mobileMenuOpen && (
+        <div className="border-t border-border bg-card/85 px-4 py-4 backdrop-blur-2xl lg:hidden">
+          <nav className="grid gap-2">
+            <Link href="/" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
               Home
             </Link>
-            <Link
-              href="/menu"
-              className="px-4 py-2 text-foreground hover:bg-muted rounded-lg transition"
-            >
+            <Link href="/menu" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
               Menu
             </Link>
+            <Link href="/#featured" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
+              Featured
+            </Link>
+            <Link href="/auth/profile" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
+              Profile
+            </Link>
+            {user ? (
+              <Link href="/auth/logout" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
+                Logout
+              </Link>
+            ) : (
+              <>
+                <Link href="/auth/login" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
+                  Sign in
+                </Link>
+                <Link href="/auth/signup" className="rounded-2xl px-4 py-3 bg-primary text-sm font-semibold text-white transition hover:bg-accent">
+                  Sign up
+                </Link>
+              </>
+            )}
           </nav>
-        )}
-      </div>
+        </div>
+      )}
     </header>
   )
 }

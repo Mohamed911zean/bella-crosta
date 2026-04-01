@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Header } from '@/components/header'
 import { ProductCard } from '@/components/product-card'
-import { getCategories, getProductsByCategory, getProducts } from '@/lib/db'
+import {  getProductsByCategory, getProducts } from '@/lib/db'
 
 export default function MenuPage() {
   const [categories, setCategories] = useState<any[]>([])
@@ -16,9 +16,7 @@ export default function MenuPage() {
     async function loadData() {
       setLoading(true)
       try {
-        // Get categories
-        const cats = await getCategories()
-        setCategories(cats)
+       
 
         // Get products based on selected category
         let prods: any[] = []
