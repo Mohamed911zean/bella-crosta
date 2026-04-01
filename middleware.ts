@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
 
         // Check admin status
         const { data: adminRow } = await supabase
-          .from('bc_admins')
+          .from('admin_users')
           .select('id')
           .eq('id', user.id)
           .maybeSingle()
