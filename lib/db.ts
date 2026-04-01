@@ -33,6 +33,17 @@ export interface Customer {
   created_at: string
 }
 
+export interface OrderItem {
+  id: string
+  order_id: string
+  product_id: string | null
+  product_name: string
+  quantity: number
+  unit_price: number
+  subtotal: number
+  created_at: string
+}
+
 export interface Order {
   id: string
   customer_id: string
@@ -45,22 +56,9 @@ export interface Order {
   payment_status: 'pending' | 'uploaded' | 'confirmed'
   payment_proof_url: string | null
   created_at: string
-  bc_order_items?: OrderItem[]
-  bc_customers?: Customer
+  order_items?: OrderItem[]
+  customers?: Customer
 }
-
-export interface OrderItem {
-  id: string
-  order_id: string
-  product_id: string | null
-  product_name: string
-  quantity: number
-  unit_price: number
-  subtotal: number
-  created_at: string
-}
-
-
 
 // ─── Products ─────────────────────────────────────────────────────────────────
 export async function getProducts(): Promise<Product[]> {
@@ -70,10 +68,7 @@ export async function getProducts(): Promise<Product[]> {
     .eq('is_available', true)
     .order('created_at', { ascending: false })
 
-  if (error) {
-    console.error('getProducts error:', error.message)
-    return []
-  }
+  if (error) { console.error('getProducts:', error.message); return [] }
   return data ?? []
 }
 
@@ -85,10 +80,7 @@ export async function getProductsByCategory(category: string): Promise<Product[]
     .eq('is_available', true)
     .order('created_at', { ascending: false })
 
-  if (error) {
-    console.error('getProductsByCategory error:', error.message)
-    return []
-  }
+  if (error) { console.error('getProductsByCategory:', error.message); return [] }
   return data ?? []
 }
 
@@ -101,10 +93,7 @@ export async function getFeaturedProducts(): Promise<Product[]> {
     .order('created_at', { ascending: false })
     .limit(6)
 
-  if (error) {
-    console.error('getFeaturedProducts error:', error.message)
-    return []
-  }
+  if (error) { console.error('getFeaturedProducts:', error.message); return [] }
   return data ?? []
 }
 
@@ -115,67 +104,63 @@ export async function getProductById(id: string): Promise<Product | null> {
     .eq('id', id)
     .single()
 
-  if (error) {
-    console.error('getProductById error:', error.message)
-    return null
-  }
+  if (error) { console.error('getProductById:', error.message); return null }
   return data
 }
 
-// Admin — all products including unavailable
 export async function getAllProducts(): Promise<Product[]> {
   const { data, error } = await supabase
     .from('products')
     .select('*')
     .order('created_at', { ascending: false })
 
-  if (error) {
-    console.error('getAllProducts error:', error.message)
-    return []
-  }
+  if (error) { console.error('getAllProducts:', error.message); return [] }
   return data ?? []
 }
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
+// Alias bc_order_items → order_items and bc_customers → customers
+// so the rest of the app doesn't need to know the underlying table names.
 export async function getOrderById(orderId: string): Promise<Order | null> {
   const { data, error } = await supabase
     .from('orders')
-    .select('*, bc_order_items(*), bc_customers(*)')
+    .select(`
+      *,
+      order_items:bc_order_items(*),
+      customers:bc_customers(*)
+    `)
     .eq('id', orderId)
     .single()
 
-  if (error) {
-    console.error('getOrderById error:', error.message)
-    return null
-  }
+  if (error) { console.error('getOrderById:', error.message); return null }
   return data
 }
 
 export async function getCustomerOrders(customerId: string): Promise<Order[]> {
   const { data, error } = await supabase
     .from('orders')
-    .select('*, bc_order_items(*)')
+    .select(`
+      *,
+      order_items:bc_order_items(*)
+    `)
     .eq('customer_id', customerId)
     .order('created_at', { ascending: false })
 
-  if (error) {
-    console.error('getCustomerOrders error:', error.message)
-    return []
-  }
+  if (error) { console.error('getCustomerOrders:', error.message); return [] }
   return data ?? []
 }
 
-// Admin — all orders
 export async function getAllOrders(): Promise<Order[]> {
   const { data, error } = await supabase
     .from('orders')
-    .select('*, bc_order_items(*), bc_customers(*)')
+    .select(`
+      *,
+      order_items:bc_order_items(*),
+      customers:bc_customers(*)
+    `)
     .order('created_at', { ascending: false })
 
-  if (error) {
-    console.error('getAllOrders error:', error.message)
-    return []
-  }
+  if (error) { console.error('getAllOrders:', error.message); return [] }
   return data ?? []
 }
 
@@ -186,10 +171,7 @@ export async function getAllCustomers(): Promise<Customer[]> {
     .select('*')
     .order('created_at', { ascending: false })
 
-  if (error) {
-    console.error('getAllCustomers error:', error.message)
-    return []
-  }
+  if (error) { console.error('getAllCustomers:', error.message); return [] }
   return data ?? []
 }
 
@@ -200,14 +182,10 @@ export async function getCustomerById(id: string): Promise<Customer | null> {
     .eq('id', id)
     .single()
 
-  if (error) {
-    console.error('getCustomerById error:', error.message)
-    return null
-  }
+  if (error) { console.error('getCustomerById:', error.message); return null }
   return data
 }
 
-// ─── Inventory (bc_products.stock_qty) ───────────────────────────────────────
 export async function getLowStockProducts(threshold = 10): Promise<Product[]> {
   const { data, error } = await supabase
     .from('products')
@@ -216,9 +194,6 @@ export async function getLowStockProducts(threshold = 10): Promise<Product[]> {
     .eq('is_available', true)
     .order('stock_qty', { ascending: true })
 
-  if (error) {
-    console.error('getLowStockProducts error:', error.message)
-    return []
-  }
+  if (error) { console.error('getLowStockProducts:', error.message); return [] }
   return data ?? []
 }

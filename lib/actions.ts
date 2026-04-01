@@ -4,7 +4,7 @@ import { supabase } from './db'
 import { getSessionToken } from './auth'
 import { createClient } from '@supabase/supabase-js'
 
-// ─── Authed Supabase client (uses the current session token from cookie) ──────
+// Authed client — uses the session cookie token so RLS applies correctly
 async function getAuthedClient() {
   const token = await getSessionToken()
   if (!token) throw new Error('Not authenticated')
@@ -19,7 +19,6 @@ async function getAuthedClient() {
   )
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 export type ActionResult<T = undefined> =
   | { success: true; data?: T }
   | { success: false; error: string }
@@ -38,7 +37,7 @@ export async function createOrder(
     const db = await getAuthedClient()
     const orderNumber = `BC-${Date.now()}`
 
-    // 1. Insert order
+    // 1. Create the order
     const { data: orderData, error: orderError } = await db
       .from('bc_orders')
       .insert({
@@ -59,25 +58,25 @@ export async function createOrder(
       return { success: false, error: orderError?.message ?? 'Failed to create order' }
     }
 
-    // 2. Insert order items
-    const orderItems = items.map(item => ({
-      order_id: orderData.id,
-      product_id: item.productId,
-      product_name: item.name,
-      quantity: item.quantity,
-      unit_price: item.price,
-      subtotal: item.price * item.quantity,
-    }))
-
+    // 2. Insert line items
     const { error: itemsError } = await db
       .from('bc_order_items')
-      .insert(orderItems)
+      .insert(
+        items.map(item => ({
+          order_id: orderData.id,
+          product_id: item.productId,
+          product_name: item.name,
+          quantity: item.quantity,
+          unit_price: item.price,
+          subtotal: item.price * item.quantity,
+        }))
+      )
 
     if (itemsError) {
       return { success: false, error: itemsError.message }
     }
 
-    // 3. Decrement stock (best-effort — don't fail order if this errors)
+    // 3. Decrement stock (best-effort, don't fail the order if this errors)
     for (const item of items) {
       const { data: product } = await supabase
         .from('bc_products')
@@ -107,7 +106,6 @@ export async function updateOrderStatus(
 ): Promise<ActionResult> {
   try {
     const db = await getAuthedClient()
-
     const { error } = await db
       .from('bc_orders')
       .update({ status })
@@ -122,10 +120,11 @@ export async function updateOrderStatus(
 }
 
 // ─── Confirm Payment (admin) ──────────────────────────────────────────────────
+// Payment proof is stored directly on bc_orders (payment_proof_url, payment_status).
+// Confirming just flips payment_status → 'confirmed' and status → 'confirmed'.
 export async function confirmPayment(orderId: string): Promise<ActionResult> {
   try {
     const db = await getAuthedClient()
-
     const { error } = await db
       .from('bc_orders')
       .update({ payment_status: 'confirmed', status: 'confirmed' })
@@ -155,7 +154,6 @@ export async function updateProduct(
 ): Promise<ActionResult> {
   try {
     const db = await getAuthedClient()
-
     const { error } = await db
       .from('bc_products')
       .update(updates)
@@ -181,7 +179,6 @@ export async function createProduct(product: {
 }): Promise<ActionResult<{ id: string }>> {
   try {
     const db = await getAuthedClient()
-
     const { data, error } = await db
       .from('bc_products')
       .insert({ ...product, is_available: true })
@@ -196,11 +193,10 @@ export async function createProduct(product: {
   }
 }
 
-// ─── Delete Product (admin) ───────────────────────────────────────────────────
+// ─── Delete Product (admin — soft delete) ────────────────────────────────────
 export async function deleteProduct(productId: string): Promise<ActionResult> {
   try {
     const db = await getAuthedClient()
-
     const { error } = await db
       .from('bc_products')
       .update({ is_available: false })
