@@ -22,18 +22,15 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const supabaseRole = process.env.SUPABASE_SERVICE_ROLE_KEY!
+const supabaseRole = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!
 
 /** The sole cookie name that holds our JWT access token. */
 
 import { SESSION_COOKIE } from './auth-constants'
 import type {UserRole , SessionUser , AuthResult} from './auth.types'
-// Validate env at module load so misconfiguration fails loudly.
-if (!supabaseUrl || !supabaseAnon || !supabaseRole) {
-  throw new Error(
-    '[auth] Missing NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, or SUPABASE_SERVICE_ROLE_KEY. ' +
-    'Check your .env.local file.'
-  )
+// Validate public env at module load
+if (!supabaseUrl || !supabaseAnon) {
+  throw new Error('[auth] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY')
 }
 
 // ─── Internal Supabase client factory ────────────────────────────────────────
@@ -47,7 +44,11 @@ function serverClient() {
 
 /** Admin client — uses service role key to bypass RLS for role checks. */
 function adminClient() {
-  return createClient(supabaseUrl, supabaseRole, {
+  const roleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!roleKey) {
+    throw new Error('[auth] SUPABASE_SERVICE_ROLE_KEY is missing')
+  }
+  return createClient(supabaseUrl, roleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 }

@@ -1,18 +1,22 @@
+
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl : any = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey : any = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-const supabaseServiceRoleKey : any = process.env.SUPABASE_SERVICE_ROLE_KEY
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
-  throw new Error('Missing Supabase environment variables')
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('Missing Supabase public environment variables')
 }
 
-export const supabase : any = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-/** Admin client — uses service role key to bypass RLS for admin dashboard data. */
+/** Admin client — uses service role key to bypass RLS. ONLY works on server. */
 export function adminClient() {
-  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!serviceKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY is not defined (check .env)')
+  }
+  return createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 }
@@ -275,3 +279,4 @@ export async function getLowStockProducts(threshold = 10): Promise<Product[]> {
   if (error) { console.error('getLowStockProducts:', error.message); return [] }
   return data ?? []
 }
+
