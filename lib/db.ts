@@ -1,13 +1,21 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabaseUrl : any = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey : any = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseServiceRoleKey : any = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-if (!supabaseUrl || !supabaseAnonKey) {
+if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
   throw new Error('Missing Supabase environment variables')
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase : any = createClient(supabaseUrl, supabaseAnonKey)
+
+/** Admin client — uses service role key to bypass RLS for admin dashboard data. */
+export function adminClient() {
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface Product {
@@ -61,6 +69,23 @@ export interface Order {
   payments?: any[]
 }
 
+export interface RawMaterial {
+  id: string
+  name: string
+  unit: string
+  stock_qty: number
+  low_stock_threshold: number
+  created_at: string
+}
+
+export interface ProductIngredient {
+  id: string
+  product_id: string
+  material_id: string
+  quantity: number
+  raw_materials?: RawMaterial
+}
+
 // ─── Products ─────────────────────────────────────────────────────────────────
 export async function getProducts(): Promise<Product[]> {
   const { data, error } = await supabase
@@ -110,12 +135,47 @@ export async function getProductById(id: string): Promise<Product | null> {
 }
 
 export async function getAllProducts(): Promise<Product[]> {
-  const { data, error } = await supabase
+  const { data, error } = await adminClient()
     .from('products')
     .select('*')
     .order('created_at', { ascending: false })
 
   if (error) { console.error('getAllProducts:', error.message); return [] }
+  return data ?? []
+}
+
+// ─── Raw Materials & Inventory ──────────────────────────────────────────────
+export async function getAllRawMaterials(): Promise<RawMaterial[]> {
+  const { data, error } = await adminClient()
+    .from('raw_materials')
+    .select('*')
+    .order('name', { ascending: true })
+
+  if (error) { console.error('getAllRawMaterials:', error.message); return [] }
+  return data ?? []
+}
+
+export async function getProductIngredients(productId: string): Promise<ProductIngredient[]> {
+  const { data, error } = await adminClient()
+    .from('product_ingredients')
+    .select(`
+      *,
+      raw_materials(*)
+    `)
+    .eq('product_id', productId)
+
+  if (error) { console.error('getProductIngredients:', error.message); return [] }
+  return data ?? []
+}
+
+export async function getLowStockMaterials(threshold = 5): Promise<RawMaterial[]> {
+  const { data, error } = await adminClient()
+    .from('raw_materials')
+    .select('*')
+    .lte('stock_qty', threshold)
+    .order('stock_qty', { ascending: true })
+
+  if (error) { console.error('getLowStockMaterials:', error.message); return [] }
   return data ?? []
 }
 
@@ -137,7 +197,7 @@ export async function getAllProducts(): Promise<Product[]> {
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
 export async function getOrderById(orderId: string): Promise<Order | null> {
-  const { data, error } = await supabase
+  const { data, error } = await adminClient()
     .from('orders')
     .select(`
       *,
@@ -153,7 +213,7 @@ export async function getOrderById(orderId: string): Promise<Order | null> {
 }
 
 export async function getCustomerOrders(customerId: string): Promise<Order[]> {
-  const { data, error } = await supabase
+  const { data, error } = await adminClient()
     .from('orders')
     .select(`
       *,
@@ -168,7 +228,7 @@ export async function getCustomerOrders(customerId: string): Promise<Order[]> {
 }
 
 export async function getAllOrders(): Promise<Order[]> {
-  const { data, error } = await supabase
+  const { data, error } = await adminClient()
     .from('orders')
     .select(`
       *,
@@ -184,7 +244,7 @@ export async function getAllOrders(): Promise<Order[]> {
 
 // ─── Customers ────────────────────────────────────────────────────────────────
 export async function getAllCustomers(): Promise<Customer[]> {
-  const { data, error } = await supabase
+  const { data, error } = await adminClient()
     .from('customers')
     .select('*')
     .order('created_at', { ascending: false })
@@ -194,7 +254,7 @@ export async function getAllCustomers(): Promise<Customer[]> {
 }
 
 export async function getCustomerById(id: string): Promise<Customer | null> {
-  const { data, error } = await supabase
+  const { data, error } = await adminClient()
     .from('customers')
     .select('*')
     .eq('id', id)
@@ -205,7 +265,7 @@ export async function getCustomerById(id: string): Promise<Customer | null> {
 }
 
 export async function getLowStockProducts(threshold = 10): Promise<Product[]> {
-  const { data, error } = await supabase
+  const { data, error } = await adminClient()
     .from('products')
     .select('*')
     .lte('stock_qty', threshold)

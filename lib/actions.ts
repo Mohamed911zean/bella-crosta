@@ -18,6 +18,17 @@ async function authedClient() {
   )
 }
 
+/** Admin client — uses service role key to bypass RLS for background tasks. */
+async function adminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+    }
+  )
+}
+
 export type ActionResult<T = undefined> =
   | { success: true;  data?: T }
   | { success: false; error: string }
@@ -121,19 +132,39 @@ export async function createOrder(
     const { error: itemsErr } = await db.from('order_items').insert(lineItems) 
     if (itemsErr) return { success: false, error: itemsErr.message }
 
-    // ── Decrement stock (best-effort — never fail the order over this)
+    // ── Recipe-based Inventory Deduction (Raw Materials)
+    // For each item ordered, we look up its recipe (ingredients) and subtract from raw_materials
+    const admin = await adminClient()
     for (const item of items) {
       try {
-        const { data: prod } = await supabase
-          .from('products').select('stock_qty').eq('id', item.productId).single()
-        if (prod) {
-          await supabase
-            .from('products')
-            .update({ stock_qty: Math.max(0, prod.stock_qty - item.quantity) })
-            .eq('id', item.productId)
+        // 1. Get the recipe for this product
+        const { data: recipe } = await admin
+          .from('product_ingredients')
+          .select('material_id, quantity')
+          .eq('product_id', item.productId)
+
+        if (recipe && recipe.length > 0) {
+          for (const ingredient of recipe) {
+            // 2. Subtract (ingredient.quantity * order.quantity) from the material stock
+            const deduction = ingredient.quantity * item.quantity
+            
+            // Get current stock
+            const { data: material } = await admin
+              .from('raw_materials')
+              .select('stock_qty')
+              .eq('id', ingredient.material_id)
+              .single()
+
+            if (material) {
+              await admin
+                .from('raw_materials')
+                .update({ stock_qty: Math.max(0, material.stock_qty - deduction) })
+                .eq('id', ingredient.material_id)
+            }
+          }
         }
       } catch (e) {
-        console.error(`stock decrement failed for ${item.productId}:`, e)
+        console.error(`Inventory deduction failed for product ${item.productId}:`, e)
       }
     }
 
@@ -198,18 +229,59 @@ export async function updateProduct(
   }
 }
 
+// ─── Update Raw Material (admin only) ────────────────────────────────────────
+export async function updateRawMaterial(
+  materialId: string,
+  updates: {
+    name?: string
+    unit?: string
+    stock_qty?: number
+    low_stock_threshold?: number
+  }
+): Promise<ActionResult> {
+  try {
+    const admin = await adminClient()
+    const { error } = await admin
+      .from('raw_materials')
+      .update(updates)
+      .eq('id', materialId)
+    
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+  } catch (e) {
+    console.error('updateRawMaterial:', e)
+    return { success: false, error: 'Failed to update raw material.' }
+  }
+}
+
 // ─── Create Product (admin only) ──────────────────────────────────────────────
 export async function createProduct(product: {
   name: string; description?: string; price: number
-  image_url?: string; category: string; is_featured?: boolean; stock_qty?: number
-}): Promise<ActionResult<{ id: string }>> {
+  image_url?: string; category: string; is_featured?: boolean
+}, ingredients?: Array<{ materialId: string; quantity: number }>): Promise<ActionResult<{ id: string }>> {
   try {
     const db = await authedClient()
+    const admin = await adminClient()
+    
+    // 1. Create the product
     const { data, error } = await db
       .from('products')
-      .insert({ ...product, is_available: true })
+      .insert({ ...product, is_available: true, stock_qty: 0 }) // stock_qty is now derived/legacy
       .select('id').single()
+    
     if (error || !data) return { success: false, error: error?.message ?? 'Failed to create product.' }
+
+    // 2. Add ingredients if provided
+    if (ingredients && ingredients.length > 0) {
+      const ingredientRows = ingredients.map(ing => ({
+        product_id: data.id,
+        material_id: ing.materialId,
+        quantity: ing.quantity
+      }))
+      const { error: ingError } = await admin.from('product_ingredients').insert(ingredientRows)
+      if (ingError) console.error('Failed to add ingredients:', ingError.message)
+    }
+
     return { success: true, data: { id: data.id } }
   } catch (e) {
     console.error('createProduct:', e)

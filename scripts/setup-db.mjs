@@ -15,7 +15,7 @@ const setupDatabase = async () => {
     console.log('[v0] Starting database setup...');
 
     // Create tables using the admin client
-    const { error: categoriesError } = await supabase.rpc('exec_sql', {
+    await supabase.rpc('exec_sql', {
       sql: `
         CREATE TABLE IF NOT EXISTS categories (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -27,7 +27,7 @@ const setupDatabase = async () => {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null })); // Ignore if table exists
+    });
 
     console.log('[v0] Categories table created');
 
@@ -47,7 +47,7 @@ const setupDatabase = async () => {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Products table created');
 
@@ -62,7 +62,7 @@ const setupDatabase = async () => {
           last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Inventory table created');
 
@@ -81,7 +81,7 @@ const setupDatabase = async () => {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Customers table created');
 
@@ -101,7 +101,7 @@ const setupDatabase = async () => {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Orders table created');
 
@@ -119,7 +119,7 @@ const setupDatabase = async () => {
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Order items table created');
 
@@ -142,7 +142,7 @@ const setupDatabase = async () => {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Payments table created');
 
@@ -159,9 +159,41 @@ const setupDatabase = async () => {
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Admin users table created');
+
+    // Raw Materials table
+    await supabase.rpc('exec_sql', {
+      sql: `
+        CREATE TABLE IF NOT EXISTS raw_materials (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          name VARCHAR(255) NOT NULL UNIQUE,
+          unit VARCHAR(50) NOT NULL,
+          stock_qty DECIMAL(10, 2) NOT NULL DEFAULT 0,
+          low_stock_threshold DECIMAL(10, 2) DEFAULT 5,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `
+    });
+
+    console.log('[v0] Raw materials table created');
+
+    // Product Ingredients table
+    await supabase.rpc('exec_sql', {
+      sql: `
+        CREATE TABLE IF NOT EXISTS product_ingredients (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          material_id UUID NOT NULL REFERENCES raw_materials(id) ON DELETE CASCADE,
+          quantity DECIMAL(10, 2) NOT NULL,
+          UNIQUE(product_id, material_id)
+        );
+      `
+    });
+
+    console.log('[v0] Product ingredients table created');
 
     // Notifications table
     await supabase.rpc('exec_sql', {
@@ -176,7 +208,7 @@ const setupDatabase = async () => {
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `
-    }).catch(() => ({ error: null }));
+    });
 
     console.log('[v0] Notifications table created');
 

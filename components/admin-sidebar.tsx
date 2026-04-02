@@ -18,7 +18,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import {
   LayoutDashboard, ShoppingCart, CreditCard,
-  Package, Users, LogOut, X,
+  Package, Users, LogOut, X, Scale, Star,
 } from 'lucide-react'
 
 interface AdminSidebarProps {
@@ -49,11 +49,13 @@ export function AdminSidebar({ mobile = false, onClose }: AdminSidebarProps) {
   }
 
   const nav = [
-    { href: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { href: '/admin/orders',    icon: ShoppingCart,    label: 'Orders'    },
-    { href: '/admin/payments',  icon: CreditCard,      label: 'Payments'  },
-    { href: '/admin/inventory', icon: Package,         label: 'Inventory' },
-    { href: '/admin/customers', icon: Users,           label: 'Customers' },
+    { href: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard'    },
+    { href: '/admin/orders',    icon: ShoppingCart,    label: 'Orders'       },
+    { href: '/admin/payments',  icon: CreditCard,      label: 'Payments'     },
+    { href: '/admin/products',  icon: Package,         label: 'Products'     },
+    { href: '/admin/inventory', icon: Scale,           label: 'Raw Materials'},
+    { href: '/admin/best-sellers', icon: Star,         label: 'Best Sellers' },
+    { href: '/admin/customers', icon: Users,           label: 'Customers'    },
   ]
 
   const content = (
