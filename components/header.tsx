@@ -92,6 +92,14 @@ export function Header() {
                     <div className="mt-1 font-semibold text-foreground break-all">{user.email}</div>
                   </div>
                   <div className="grid gap-1 p-3">
+                    {user.role === 'admin' && (
+                      <Link
+                        href="/admin/dashboard"
+                        className="rounded-2xl px-3 py-2 text-sm font-semibold text-primary transition hover:bg-primary/10"
+                      >
+                        Admin Panel
+                      </Link>
+                    )}
                     <Link
                       href="/auth/profile"
                       className="rounded-2xl px-3 py-2 text-sm text-foreground transition hover:bg-muted"
@@ -99,7 +107,7 @@ export function Header() {
                       Profile
                     </Link>
                     <Link
-                      href="/auth/logout"
+                      href="/api/auth/logout"
                       className="rounded-2xl px-3 py-2 text-sm text-foreground transition hover:bg-muted"
                     >
                       Logout
@@ -151,8 +159,13 @@ export function Header() {
             <Link href="/auth/profile" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
               Profile
             </Link>
+            {user?.role === 'admin' && (
+              <Link href="/admin/dashboard" className="rounded-2xl px-4 py-3 text-sm font-semibold text-primary transition hover:bg-primary/10">
+                Admin Panel
+              </Link>
+            )}
             {user ? (
-              <Link href="/auth/logout" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
+              <Link href="/api/auth/logout" className="rounded-2xl px-4 py-3 text-sm text-foreground transition hover:bg-muted">
                 Logout
               </Link>
             ) : (

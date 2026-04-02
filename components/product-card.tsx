@@ -97,7 +97,7 @@ export function ProductCard({
             {/* Qty selector */}
             <div className="flex items-center border border-border rounded-xl overflow-hidden">
               <button
-                onClick={() => setQuantity(q => Math.max(1, q - 1))}
+                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
                 className="px-2.5 py-2 hover:bg-muted transition text-foreground"
               >
                 <Minus className="w-3 h-3" />
@@ -106,7 +106,7 @@ export function ProductCard({
                 {quantity}
               </span>
               <button
-                onClick={() => setQuantity(q => Math.min(stock_qty, q + 1))}
+                onClick={() => setQuantity((q) => Math.min(stock_qty, q + 1))}
                 className="px-2.5 py-2 hover:bg-muted transition text-foreground"
               >
                 <Plus className="w-3 h-3" />

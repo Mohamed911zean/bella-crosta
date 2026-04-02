@@ -1,16 +1,10 @@
-'use server'
-
-import { AdminSidebar } from '@/components/admin-sidebar'
-import { getAllOrders } from '@/lib/db'
-import type { Order } from '@/lib/db'
-import { Menu, TrendingUp, ShoppingCart, CreditCard, Package } from 'lucide-react'
-import Link from 'next/link'
 import { requireAdmin } from '@/lib/auth'
+import { getAllOrders } from '@/lib/db'
 import AdminDashboardClient from './client'
 
+// Server component: auth guard runs on server — no redirect flash
 export default async function AdminDashboard() {
   await requireAdmin()
   const orders = await getAllOrders()
-
   return <AdminDashboardClient orders={orders} />
 }

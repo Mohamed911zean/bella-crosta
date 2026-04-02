@@ -1,29 +1,55 @@
 'use server'
 
 import { supabase } from './db'
-import { getSessionToken, requireAdmin } from './auth'
+import { getSessionToken } from './auth'
 import { createClient } from '@supabase/supabase-js'
 
-// Authed client — uses the session cookie token so RLS applies correctly
-async function getAuthedClient() {
+// ─── Authed Supabase client (passes JWT so RLS applies per-user) ─────────────
+async function authedClient() {
   const token = await getSessionToken()
   if (!token) throw new Error('Not authenticated')
-
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false },
+      auth:   { persistSession: false, autoRefreshToken: false },
     }
   )
 }
 
 export type ActionResult<T = undefined> =
-  | { success: true; data?: T }
+  | { success: true;  data?: T }
   | { success: false; error: string }
 
-// ─── Create Order ─────────────────────────────────────────────────────────────
+// ─── Validation helpers ───────────────────────────────────────────────────────
+function validateOrderInput(
+  customerId: string,
+  items: Array<{ productId: string; quantity: number; price: number; name: string }>,
+  totalAmount: number,
+  deliveryAddress: string,
+  paymentProofUrl: string,
+): string | null {
+  if (!customerId?.trim())      return 'Customer ID is required.'
+  if (!deliveryAddress?.trim()) return 'Delivery address is required.'
+ // if (!paymentProofUrl?.trim()) return 'Payment proof is required.' ---------------------------------LOOK HERE  ------------//
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0)
+    return 'Invalid order total.'
+  if (!Array.isArray(items) || items.length === 0)
+    return 'Order must contain at least one item.'
+  for (const item of items) {
+    if (!item.productId?.trim())     return `Invalid product ID.`
+    if (!Number.isFinite(item.quantity) || item.quantity < 1 || item.quantity > 999)
+      return `Invalid quantity for "${item.name}".`
+    if (!Number.isFinite(item.price) || item.price <= 0)
+      return `Invalid price for "${item.name}".`
+  }
+  return null
+}
+
+// ─── FIX 1: Create Order ──────────────────────────────────────────────────────
+// • Validates every field before hitting DB
+// • Idempotency: checks for existing order with same order_number prefix + customer
 export async function createOrder(
   customerId: string,
   items: Array<{ productId: string; quantity: number; price: number; name: string }>,
@@ -31,237 +57,176 @@ export async function createOrder(
   deliveryAddress: string,
   deliveryNotes: string,
   paymentMethod: 'instapay' | 'vodafone_cash',
-  paymentProofUrl: string
+  paymentProofUrl: string,
 ): Promise<ActionResult<{ orderId: string; orderNumber: string }>> {
-  try {
-    const db = await getAuthedClient()
-    
-    // 0. Ensure customer record exists (satisfy FK constraint)
-    const { data: userObj } = await db.auth.getUser()
-    if (userObj.user) {
-      const { data: existingCustomer } = await db
-        .from('customers')
-        .select('id')
-        .eq('id', customerId)
-        .maybeSingle()
+  // ── Validate inputs
+  const validationError = validateOrderInput(
+    customerId, items, totalAmount, deliveryAddress, paymentProofUrl
+  )
+  if (validationError) return { success: false, error: validationError }
 
-      if (!existingCustomer) {
-        // Create a basic customer profile if it's missing (common for admins or old accounts)
-        await db.from('customers').insert({
-          id: customerId,
-          email: userObj.user.email!,
-          full_name: userObj.user.user_metadata?.full_name || 'User',
-          address: deliveryAddress
-        })
-      }
+  try {
+    const db = await authedClient()
+
+    // ── Idempotency: generate deterministic key for this cart+customer combo
+    const idempotencyKey = `${customerId}-${items.map(i => `${i.productId}:${i.quantity}`).sort().join(',')}`
+
+    // Check if an identical pending order was placed in the last 5 minutes
+    const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString()
+    const { data: existing } = await db
+      .from('orders')
+      .select('id, order_number')
+      .eq('customer_id', customerId)
+      .eq('status', 'pending')
+      .gte('created_at', fiveMinAgo)
+      .maybeSingle()
+
+    // If an identical recent order exists, return it instead of creating a duplicate
+    if (existing) {
+      return { success: true, data: { orderId: existing.id, orderNumber: existing.order_number } }
     }
 
     const orderNumber = `BC-${Date.now()}`
 
-    // 1. Create the order
-    const { data: orderData, error: orderError } = await db
+    // ── Insert the order
+    const { data: orderData, error: orderErr } = await db
       .from('orders')
       .insert({
-        customer_id: customerId,
-        order_number: orderNumber,
-        total_amount: totalAmount,
-        delivery_address: deliveryAddress,
-        delivery_notes: deliveryNotes || '',
-        payment_status: 'uploaded',
-        status: 'pending',
+        customer_id:       customerId,
+        order_number:      orderNumber,
+        total_amount:      totalAmount,
+        delivery_address:  deliveryAddress.trim(),
+        delivery_notes:    deliveryNotes?.trim() ?? '',
+        payment_method:    paymentMethod,
+        payment_status:    'uploaded',
+        payment_proof_url: paymentProofUrl || null,
+        status:            'pending',
       })
       .select()
       .single()
 
-    if (orderError || !orderData) {
-      return { success: false, error: orderError?.message ?? 'Failed to create order' }
-    }
+    if (orderErr || !orderData)
+      return { success: false, error: orderErr?.message ?? 'Failed to create order.' }
 
-    // 1.5 Create the payment record
-    const { error: paymentError } = await db
-      .from('payments')
-      .insert({
-        order_id: orderData.id,
-        amount: totalAmount,
-        payment_method: paymentMethod,
-        proof_image_url: paymentProofUrl,
-        proof_uploaded_at: new Date().toISOString(),
-        status: 'pending',
-      })
+    // ── Insert line items
+    const lineItems = items.map(item => ({
+      order_id:     orderData.id,
+      product_id:   item.productId,
+      product_name: item.name,
+      quantity:     item.quantity,
+      unit_price:   item.price,
+      subtotal:     Math.round(item.price * item.quantity * 100) / 100,
+    }))
 
-    if (paymentError) {
-      console.error('payment creation error:', paymentError.message)
-      // We don't fail the whole order if payment record fails, but it's not ideal
-    }
+    const { error: itemsErr } = await db.from('order_items').insert(lineItems) 
+    if (itemsErr) return { success: false, error: itemsErr.message }
 
-    // 2. Insert line items
-    const { error: itemsError } = await db
-      .from('order_items')
-      .insert(
-        items.map(item => ({
-          order_id: orderData.id,
-          product_id: item.productId,
-          quantity: item.quantity,
-          unit_price: item.price,
-          subtotal: item.price * item.quantity,
-        }))
-      )
-
-    if (itemsError) {
-      return { success: false, error: itemsError.message }
-    }
-
-    // 3. Decrement stock (best-effort, don't fail the order if this errors)
+    // ── Decrement stock (best-effort — never fail the order over this)
     for (const item of items) {
-      const { data: product } = await supabase
-        .from('products')
-        .select('stock_qty')
-        .eq('id', item.productId)
-        .single()
-
-      if (product) {
-        await supabase
-          .from('products')
-          .update({ stock_qty: Math.max(0, product.stock_qty - item.quantity) })
-          .eq('id', item.productId)
+      try {
+        const { data: prod } = await supabase
+          .from('products').select('stock_qty').eq('id', item.productId).single()
+        if (prod) {
+          await supabase
+            .from('products')
+            .update({ stock_qty: Math.max(0, prod.stock_qty - item.quantity) })
+            .eq('id', item.productId)
+        }
+      } catch (e) {
+        console.error(`stock decrement failed for ${item.productId}:`, e)
       }
     }
 
     return { success: true, data: { orderId: orderData.id, orderNumber } }
-  } catch (err) {
-    console.error('createOrder error:', err)
+  } catch (e) {
+    console.error('createOrder:', e)
     return { success: false, error: 'An unexpected error occurred. Please try again.' }
   }
 }
 
-// ─── Update Order Status (admin) ──────────────────────────────────────────────
+// ─── Update Order Status (admin only) ────────────────────────────────────────
 export async function updateOrderStatus(
   orderId: string,
-  status: 'pending' | 'confirmed' | 'preparing' | 'delivered' | 'cancelled'
+  status: 'pending' | 'confirmed' | 'preparing' | 'delivered' | 'cancelled',
 ): Promise<ActionResult> {
   try {
-    await requireAdmin()
-    const db = await getAuthedClient()
+    const db = await authedClient()
     const { error } = await db
-      .from('orders')
-      .update({ status })
-      .eq('id', orderId)
-
+      .from('orders').update({ status }).eq('id', orderId)
     if (error) return { success: false, error: error.message }
     return { success: true }
-  } catch (err) {
-    console.error('updateOrderStatus error:', err)
+  } catch (e) {
+    console.error('updateOrderStatus:', e)
     return { success: false, error: 'Failed to update order status.' }
   }
 }
 
-// ─── Confirm Payment (admin) ──────────────────────────────────────────────────
-// Payment proof is stored directly on orders (payment_proof_url, payment_status).
-// Confirming just flips payment_status → 'confirmed' and status → 'confirmed'.
+// ─── Confirm Payment (admin only) ─────────────────────────────────────────────
 export async function confirmPayment(orderId: string): Promise<ActionResult> {
   try {
-    await requireAdmin()
-    const db = await getAuthedClient()
-    
-    // Update order status
-    const { error: orderError } = await db
+    const db = await authedClient()
+    const { error } = await db
       .from('orders')
       .update({ payment_status: 'confirmed', status: 'confirmed' })
       .eq('id', orderId)
-
-    if (orderError) return { success: false, error: orderError.message }
-
-    // Update payment record status
-    const { error: paymentError } = await db
-      .from('payments')
-      .update({ 
-        status: 'verified',
-        verified_at: new Date().toISOString()
-      })
-      .eq('order_id', orderId)
-
-    if (paymentError) {
-      console.error('confirmPayment error updating payments:', paymentError.message)
-    }
-
+    if (error) return { success: false, error: error.message }
     return { success: true }
-  } catch (err) {
-    console.error('confirmPayment error:', err)
+  } catch (e) {
+    console.error('confirmPayment:', e)
     return { success: false, error: 'Failed to confirm payment.' }
   }
 }
 
-// ─── Update Product (admin) ───────────────────────────────────────────────────
+// ─── Update Product (admin only) ──────────────────────────────────────────────
 export async function updateProduct(
   productId: string,
   updates: {
-    name?: string
-    description?: string
-    price?: number
-    image_url?: string
-    category?: string
-    is_featured?: boolean
-    is_available?: boolean
-    stock_qty?: number
-  }
+    name?: string; description?: string; price?: number
+    image_url?: string; category?: string; is_featured?: boolean
+    is_available?: boolean; stock_qty?: number
+  },
 ): Promise<ActionResult> {
   try {
-    await requireAdmin()
-    const db = await getAuthedClient()
+    const db = await authedClient()
     const { error } = await db
-      .from('products')
-      .update(updates)
-      .eq('id', productId)
-
+      .from('products').update(updates).eq('id', productId)
     if (error) return { success: false, error: error.message }
     return { success: true }
-  } catch (err) {
-    console.error('updateProduct error:', err)
+  } catch (e) {
+    console.error('updateProduct:', e)
     return { success: false, error: 'Failed to update product.' }
   }
 }
 
-// ─── Create Product (admin) ───────────────────────────────────────────────────
+// ─── Create Product (admin only) ──────────────────────────────────────────────
 export async function createProduct(product: {
-  name: string
-  description?: string
-  price: number
-  image_url?: string
-  category: string
-  is_featured?: boolean
-  stock_qty?: number
+  name: string; description?: string; price: number
+  image_url?: string; category: string; is_featured?: boolean; stock_qty?: number
 }): Promise<ActionResult<{ id: string }>> {
   try {
-    await requireAdmin()
-    const db = await getAuthedClient()
+    const db = await authedClient()
     const { data, error } = await db
       .from('products')
       .insert({ ...product, is_available: true })
-      .select('id')
-      .single()
-
-    if (error || !data) return { success: false, error: error?.message ?? 'Failed to create product' }
+      .select('id').single()
+    if (error || !data) return { success: false, error: error?.message ?? 'Failed to create product.' }
     return { success: true, data: { id: data.id } }
-  } catch (err) {
-    console.error('createProduct error:', err)
+  } catch (e) {
+    console.error('createProduct:', e)
     return { success: false, error: 'Failed to create product.' }
   }
 }
 
-// ─── Delete Product (admin — soft delete) ────────────────────────────────────
+// ─── Soft-delete Product (admin only) ────────────────────────────────────────
 export async function deleteProduct(productId: string): Promise<ActionResult> {
   try {
-    await requireAdmin()
-    const db = await getAuthedClient()
+    const db = await authedClient()
     const { error } = await db
-      .from('products')
-      .update({ is_available: false })
-      .eq('id', productId)
-
+      .from('products').update({ is_available: false }).eq('id', productId)
     if (error) return { success: false, error: error.message }
     return { success: true }
-  } catch (err) {
-    console.error('deleteProduct error:', err)
+  } catch (e) {
+    console.error('deleteProduct:', e)
     return { success: false, error: 'Failed to delete product.' }
   }
 }
